@@ -29,6 +29,13 @@ namespace rain{
 
     };
 
+    template<>
+    struct std::hash<rain::gameplay_tag>{
+        std::size_t operator()(rain::gameplay_tag tag)const noexcept{
+            return static_cast<std::size_t>(tag.id.value);
+        }
+    };
+
     class gameplay_tag_registry{
     public:
         gameplay_tag register_tag(std::string_view name){
@@ -45,6 +52,6 @@ namespace rain{
         }
 
     private:
-        rain_hash_map<string_id,std::string>name_map_;
+        rain_hash_map<string_id,std::string> name_map_;
     };
 }

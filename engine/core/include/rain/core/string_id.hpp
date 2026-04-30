@@ -46,7 +46,7 @@ namespace rain {
 }
 
 namespace std {
-    template <.
+    template <>
     struct hash<rain::string_id>{
         std::size_t operator()(const rain:;string_id id)const noexcept{
             return static_cast<std::size_t>(id.value);

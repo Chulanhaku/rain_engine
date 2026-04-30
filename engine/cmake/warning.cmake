@@ -7,3 +7,5 @@ function(rain_set_project_warnings target_name)
         target_compile_options(${target_name}PRIVATE
             -Wall -Wextra -Wshadow -Wconversion
         )
+    endif()
+endfunction()

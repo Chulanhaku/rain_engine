@@ -13,6 +13,9 @@ namespace rain{
     using u16 = std::uint16_t;
     using u32 = std::uint32_t;
     using u64 = std::uint64_t;
+    
+    using f32 = float;
+    using f64 = double;
 
     using usize = std::size_t;
 
