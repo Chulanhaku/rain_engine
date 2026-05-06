@@ -10,7 +10,7 @@ namespace rain{
         queued
     };
 
-    struct event_lisner_handle{
+    struct event_listener_handle{
         type_id event_type;
         u32 index = invalid_u32;
         u32 generation = 0;
