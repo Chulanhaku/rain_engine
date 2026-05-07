@@ -2,6 +2,9 @@
 
 #include<rain/core/container/rain_sparse_set.hpp>
 #include<rain/runtime/entity.hpp>
+#include<rain/core/types.hpp>
+
+#include<utility>
 
 namespace rain{
     template<typename component_type>
@@ -46,6 +49,10 @@ namespace rain{
 
         [[nodiscard]] usize size()const{
             return components_.size();
+        }
+
+        [[nodiscard]]bool empty()const{
+            return components_.size()==0;
         }
 
     private:
