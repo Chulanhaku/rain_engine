@@ -4,11 +4,11 @@
 
 namespace rain{
     struct handle{
-        u32 index = invlaid_u32;
+        u32 index = invalid_u32;
         u32 generation = 0;
 
         [[nodiscard]] bool is_valid()const{
-            return index != invalid_index;
+            return index != invalid_u32;
         }
 
         friend bool operator==(handle lhs,handle rhs){

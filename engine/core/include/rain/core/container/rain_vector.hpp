@@ -199,7 +199,7 @@ namespace rain{
         struct storage_type{
             alignas(value_type) std::byte bytes[sizeof(value_type)];
         };
-#elif
+#else
         using storage_type = std::aligned_storage_t<sizeof(value_type), alignof(value_type)>;
 #endif
         

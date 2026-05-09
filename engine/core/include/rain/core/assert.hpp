@@ -4,7 +4,7 @@
 
 #include<rain/core/log.hpp>
 
-#define rain_asert(expr)                                            \
+#define rain_assert(expr)                                            \
     do                                                              \
     {                                                               \
         if(!(expr))                                                 \

@@ -1,11 +1,11 @@
 #pragma once
 
 #include<rain/core/event/event_context.hpp>
-
+#include<rain/core/types.hpp>
 #include<string>
 #include<vector>
 
-namespace{
+namespace rain{
     struct event_trace_entry{
         event_context context;
         std::string listener_name;

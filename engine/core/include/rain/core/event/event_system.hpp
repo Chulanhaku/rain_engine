@@ -46,6 +46,30 @@ namespace rain{
         bool trace_enabled = true;
     };
 
+    struct event_listener_debug_info{
+        std::string listener_name;
+        std::string owner_name;
+        i32 priority = 0;
+        bool alive = false;
+        bool enabled = false;
+        u32 generation = 0;
+    };
+
+    struct event_listener_table_entry{
+        type_id event_type;
+        std::string event_name;
+        std::string category;
+
+        std::string listener_name;
+        std::string owner_name;
+
+        i32 priority=0;
+        bool alive = false;
+        bool enabled = false;
+        u32 generation = 0;
+
+    }
+
     class event_system{
     public:
         template<typename event_type>
@@ -179,6 +203,16 @@ namespace rain{
             return tace_log_;
         }
 
+        [[nodiscard]]std::vector<event_listener_table_entry>get_all_listener_debug_infos()const{
+            std::vector<event_listener_table_entry> result;
+
+            for(const std::unique_ptr<event_channel_base>& channel : channels_){
+                channel->collect_listener_debug_info_base(result);
+            }
+
+            return result;
+        }
+
         [[nodiscard]] const event_trace_log& trace_log()const{
             return trace_log_;
         }
@@ -208,6 +242,7 @@ namespace rain{
     private:
         struct event_channel_base{
             virtual~event_channel_base()=default;
+            virtual void collect_listener_debug_info_base(std::vector<event_listener_table_entry>&output)const = 0;
             virtual void dispatch_queued_base(event_trace_log&trace_log)=0;
             virtual void clear_queued_base()=0;
             virtual event_type_debug_info get_debug_info_base()const =0;
@@ -275,6 +310,22 @@ namespace rain{
                 queued_events.clear();
             }
 
+            void collect_listener_debug_info_base(std::vector<event_listener_table_entry>&output)const override{
+                for(const listener_slot&slot:listeners){
+                    output.push_back(event_listener_table_entry{
+                        .event_type = info.id,
+                        .event_name = info.event_name,
+                        .category = info.category,
+                        .listener_name = slot.listener_name,
+                        .owner_name = slot.owner_name,
+                        .priority = slot.priority,
+                        .alive = slot.alive,
+                        .enabled = slot.enabled,
+                        .generation = slot.generation
+                    });
+
+                }
+            }
 
             event_type_debug_info get_debug_info_base()const override{
                 event_type_debug_info result = info;

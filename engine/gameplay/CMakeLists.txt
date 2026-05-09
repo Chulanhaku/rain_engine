@@ -3,6 +3,11 @@ add_library(rain_gameplay)
 target_sources(rain_gameplay
     PRIVATE
         src/gameplay_tag.cpp
+    PUBLIC
+        include/rain/gameplay/gameplay_tag.hpp
+        include/rain/gameplay/gameplay_tag_container.hpp
+        include/rain/gameplay/gameplay_tag_event.hpp
+        include/rain/gameplay/gameplay_tag_query.hpp
 )
 
 target_include_directories(rain_gameplay

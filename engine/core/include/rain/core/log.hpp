@@ -7,7 +7,7 @@ namespace rain{
         info,
         warning,
         error
-    }
+    };
 
     void log_message(log_level level,std::string_view message);
     void log_info(std::string_view message);

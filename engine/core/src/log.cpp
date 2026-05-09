@@ -6,7 +6,7 @@ namespace rain {
     void log_message(log_level level,std::string_view message){
         const char* prefix = "[rain][info] ";
 
-        swtich(level){
+        switch(level){
             case log_level::info:
                 prefix =  "[rain][info] ";
                 break;
@@ -22,14 +22,14 @@ namespace rain {
     }
 
     void log_info(std::string_view message){
-        return(log_level::info,message);
+        log_message(log_level::info,message);
     }
 
     void log_error(std::string_view message){
-        return(log_level::error,message);
+        log_message(log_level::error,message);
     }
 
     void log_warning(std::string_view message){
-        return(log_level::warning,message);
+        log_message(log_level::warning,message);
     }
 }

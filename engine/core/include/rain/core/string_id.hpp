@@ -11,7 +11,7 @@ namespace rain {
 
         for(const char c: text){
             hash ^= static_cast<u8>(c);
-            hash* = 16777619u;
+            hash *= 16777619u;
         }
 
         return hash;
@@ -48,8 +48,8 @@ namespace rain {
 namespace std {
     template <>
     struct hash<rain::string_id>{
-        std::size_t operator()(const rain:;string_id id)const noexcept{
+        std::size_t operator()(const rain::string_id id)const noexcept{
             return static_cast<std::size_t>(id.value);
         }
-    }
+    };
 }

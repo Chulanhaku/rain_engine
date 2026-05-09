@@ -6,6 +6,14 @@ target_sources(rain_runtime
         src/world.cpp
         src/component_storage.cpp
         src/scene.cpp
+    PUBLIC
+        include/rain/runtime/entity.hpp
+        include/rain/runtime/world.hpp
+        include/rain/runtime/component_pool.hpp
+        include/rain/runtime/component_registry.hpp
+        include/rain/runtime/system_scheduler.hpp
+        include/rain/runtime/transform_2d_component.hpp
+        include/rain/runtime/velocity_2d_component.hpp
 )
 
 target_include_directories(rain_runtime

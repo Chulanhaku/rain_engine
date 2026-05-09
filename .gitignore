@@ -1,0 +1,24 @@
+# Visual Studio
+.vs/
+
+# CMake build output
+build/
+out/
+
+# VSCode
+.vscode/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+
+# Binary files
+*.exe
+*.dll
+*.lib
+*.a
+*.o
+*.obj
+*.pdb

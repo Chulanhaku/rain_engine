@@ -1,6 +1,6 @@
 #pragma once
 
-#include<rain/core/event_event_system.hpp>
+#include<rain/core/event/event_system.hpp>
 #include<rain/core/types.hpp>
 #include<rain/runtime/world.hpp>
 
@@ -32,7 +32,7 @@ namespace rain{
             void* user_data = nullptr;
         };
 
-        void add_system(system_desc){
+        void add_system(system_desc& desc){
             systems_.push_back(std::move(desc));
             order_dirty_=true;
         }
@@ -40,7 +40,7 @@ namespace rain{
         void run(world& target_world,event_system&events,f32 delta_seconds,u64 frame_index){
             rebuild_order_if_needed();
 
-            evnets.begin_frame(frame_index);
+            events.begin_frame(frame_index);
 
             system_context context{
                 .target_world = &target_world,

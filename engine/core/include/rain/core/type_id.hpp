@@ -6,7 +6,7 @@
 
 namespace rain{
     struct type_id{
-        u32 value = invlaid_u32;
+        u32 value = invalid_u32;
 
         [[nodiscard]]bool is_valid()const{
             return value!= invalid_u32;
@@ -30,7 +30,7 @@ namespace rain{
         static type_id next(){
             static u32 next_value = 0;
 
-            type_id reslut{
+            type_id result{
                 .value = next_value
             };
 
@@ -53,5 +53,5 @@ namespace std{
         std::size_t operator()(rain::type_id id)const noexcept{
             return static_cast<std::size_t>(id.value);
         }
-    }
+    };
 }

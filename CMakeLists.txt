@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(rain_engine version 0.1.0 LANGUAGES CXX)
+project(rain_engine
+    VERSION 0.1.0 
+    LANGUAGES CXX
+)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
