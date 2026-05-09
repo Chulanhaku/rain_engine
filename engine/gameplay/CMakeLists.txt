@@ -22,4 +22,4 @@ target_link_libraries(rain_gameplay
 )
 
 rain_apply_common_options(rain_gameplay)
-rain_apply_warnings(rain_gameplay)
+rain_set_project_warnings(rain_gameplay)

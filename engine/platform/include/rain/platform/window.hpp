@@ -25,7 +25,7 @@ namespace rain{
         rain_window(const rain_window&&) = delete;
         rain_window& operator=(const rain_window&&)=delete;
 
-        void poll_event();
+        void poll_events();
 
         void present();
 

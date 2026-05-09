@@ -68,7 +68,7 @@ namespace rain{
         bool enabled = false;
         u32 generation = 0;
 
-    }
+    };
 
     class event_system{
     public:
@@ -106,6 +106,9 @@ namespace rain{
             slot.callback = std::move(desc.callback);
             slot.order = channel.next_listener_order++;
 
+            channel.listeners.push_back(std::move(slot));
+            channel.listener_order_dirty = true;
+            
             return event_listener_handle{
                 .event_type = get_type_id<event_type>(),
                 .index = index,
@@ -116,7 +119,7 @@ namespace rain{
         template<typename event_type>
         void remove_listener(event_listener_handle handle){
             if(handle.event_type != get_type_id<event_type>()){
-                return
+                return;
             }
 
             event_channel<event_type>*channel = try_get_channel<event_type>();
@@ -171,7 +174,7 @@ namespace rain{
 
             const event_context context = make_event_context(event_dispatch_mode::queued,channel.info.event_name,desc,next_sequence(),frame_index_);
 
-            channel.queued_events.push_back(typename event_channel<event_type>::queued_event{.event = event,.context = context})
+            channel.queued_events.push_back(typename event_channel<event_type>::queued_event{.event = event,.context = context});
         }
 
         template<typename event_type>
@@ -200,7 +203,7 @@ namespace rain{
         }
 
         [[nodiscard]] event_trace_log& trace_log(){
-            return tace_log_;
+            return trace_log_;
         }
 
         [[nodiscard]]std::vector<event_listener_table_entry>get_all_listener_debug_infos()const{
@@ -230,7 +233,7 @@ namespace rain{
 
         template<typename event_type>
         [[nodiscard]]std::vector<event_listener_debug_info>get_listener_debug_infos()const{
-            const event_channel<event_type>*try_get_channel<event_type>();
+            const event_channel<event_type>*channel = try_get_channel<event_type>();
 
             if(channel==nullptr){
                 return{};
@@ -276,7 +279,7 @@ namespace rain{
                 info.event_size = sizeof(event_type);
             }
 
-            void dispatch_now(const event_type& event,const event_context& context,event_tarce_log& trace_log){
+            void dispatch_now(const event_type& event,const event_context& context,event_trace_log& trace_log){
                 rebuild_listener_order_if_needed();
                 for(const u32 listener_index:sorted_listener_indices){
                     listener_slot& slot = listeners[listener_index];
@@ -292,18 +295,18 @@ namespace rain{
             }
 
 
-            void dispatch_queued(event_trace_log& trace_log)override{
+            void dispatch_queued(event_trace_log& trace_log){
                 const std::vector<queued_event> events_to_dispatch = std::move(queued_events);
                 queued_events.clear();
 
-                for(const queued_event&queued :events_tp_dispatch){
-                    dispatch_now(queued.evnet,queued.context,tracce_log);
+                for(const queued_event&queued :events_to_dispatch){
+                    dispatch_now(queued.event,queued.context,trace_log);
                 }
             }
 
 
             void dispatch_queued_base(event_trace_log&trace_log)override{
-                distpatch_queued(trace_log);
+                dispatch_queued(trace_log);
             }
 
             void clear_queued_base()override{
@@ -347,7 +350,7 @@ namespace rain{
                 std::vector<event_listener_debug_info>result;
                 result.reserve(listeners.size());
 
-                for(const listener_slot& solt:listeners ){
+                for(const listener_slot& slot:listeners ){
                     result.push_back(event_listener_debug_info{.listener_name = slot.listener_name,.owner_name=slot.owner_name,.priority = slot.priority,.alive = slot.alive,.enabled = slot.enabled,.generation = slot.generation});
                 }
                 return result;
@@ -357,7 +360,7 @@ namespace rain{
                 if(!listener_order_dirty)return;
 
                 sorted_listener_indices.clear();
-                sorted_listener_indices.reserve(listener.size());
+                sorted_listener_indices.reserve(listeners.size());
 
                 for(usize i =0;i<listeners.size();++i){
                     if(listeners[i].alive){
@@ -366,8 +369,8 @@ namespace rain{
                 }
 
                 std::sort(sorted_listener_indices.begin(),sorted_listener_indices.end(),[this](u32 lhs_index,u32 rhs_index){
-                    const listener_slot& lhs =listener[lhs_index];
-                    const listener_slot&rhs  = listener[rhs_index];
+                    const listener_slot& lhs =listeners[lhs_index];
+                    const listener_slot&rhs  = listeners[rhs_index];
                     if(lhs.priority != rhs.priority){
                         return lhs.priority>rhs.priority;
                     }
@@ -430,6 +433,6 @@ namespace rain{
 
         u64 next_sequence_ = 0;
         u64 frame_index_ = 0;
-    }
+    };
 
 }

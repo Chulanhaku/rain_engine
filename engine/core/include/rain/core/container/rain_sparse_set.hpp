@@ -24,12 +24,12 @@ namespace rain{
         }
 
         value_type&get(id_type id){
-            rain_asert(contains(id));
+            rain_assert(contains(id));
             return dense_values_[sparse_indices_[id.index]];
         }
 
         const value_type& get(id_type id)const{
-            rain_asert(contains(id));
+            rain_assert(contains(id));
             return dense_values_[sparse_indices_[id.index]];
         }
 
@@ -47,7 +47,7 @@ namespace rain{
 
             const u32 dense_index = static_cast<u32>(dense_values_.size());
             sparse_indices_[id.index] = dense_index;
-            dense_ids_.push_bakc(id);
+            dense_ids_.push_back(id);
             dense_values_.emplace_back(std::forward<args_type>(args)...);
 
             return dense_values_.back();
@@ -84,7 +84,7 @@ namespace rain{
             return dense_values_.size();
         }
 
-        [[nodiscard]]std::vector<id_type>& ids() const{
+        [[nodiscard]]std::vector<id_type>& ids() {
             return dense_ids_;
         }
 
@@ -92,7 +92,7 @@ namespace rain{
             return dense_ids_;
         }
 
-        [[nodiscard]]std::vector<value_type>& values() const{
+        [[nodiscard]]std::vector<value_type>& values() {
             return dense_values_;
         }
 

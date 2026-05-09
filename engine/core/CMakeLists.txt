@@ -2,10 +2,10 @@ add_library(rain_core)
 
 target_sources(rain_core
     PRIVATE
-        src/assert.cpp
+        #src/assert.cpp
         src/log.cpp
         src/string_id.cpp
-        src/allocator.cpp
+        #src/allocator.cpp
     PUBLIC
         include/rain/core/assert.hpp
         include/rain/core/types.hpp
@@ -14,9 +14,9 @@ target_sources(rain_core
         include/rain/core/type_id.hpp
         include/rain/core/handle.hpp
 
-        include/rain/core/container/sparse_set.hpp
-        include/rain/core/container/fixed_vector.hpp
-        include/rain/core/container/flat_hash_map.hpp
+        include/rain/core/container/rain_sparse_set.hpp
+        include/rain/core/container/rain_vector.hpp
+        include/rain/core/container/rain_hash_map.hpp
         include/rain/core/container/handle_pool.hpp
 
         include/rain/core/event/event_fwd.hpp

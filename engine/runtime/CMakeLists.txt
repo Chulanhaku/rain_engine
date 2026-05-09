@@ -4,8 +4,8 @@ target_sources(rain_runtime
     PRIVATE
         src/entity.cpp
         src/world.cpp
-        src/component_storage.cpp
-        src/scene.cpp
+        #src/component_storage.cpp
+        #src/scene.cpp
     PUBLIC
         include/rain/runtime/entity.hpp
         include/rain/runtime/world.hpp
@@ -18,7 +18,7 @@ target_sources(rain_runtime
 
 target_include_directories(rain_runtime
     PUBLIC
-        $(CMAKE_CURRENT_SOURCE_DIR)/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 target_link_libraries(rain_runtime

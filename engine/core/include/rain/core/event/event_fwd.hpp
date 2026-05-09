@@ -16,14 +16,14 @@ namespace rain{
         u32 generation = 0;
 
         [[nodiscard]] bool is_valid()const{
-            return event_type.is_valid&&index!= invalid_u32;
+            return event_type.is_valid()&&index!= invalid_u32;    
         }
 
-        friend bool operator==(event_lisner_handle lhs,event_lisner_handle rhs){
+        friend bool operator==(event_listener_handle lhs,event_listener_handle rhs){
             return lhs.event_type == rhs.event_type && lhs.index==rhs.index&&lhs.generation==rhs.generation;
         }
 
-        friend bool operator!=(event_lisner_handle lhs,event_lisner_handle rhs){
+        friend bool operator!=(event_listener_handle lhs,event_listener_handle rhs){
             return !(lhs==rhs);
         }
     };

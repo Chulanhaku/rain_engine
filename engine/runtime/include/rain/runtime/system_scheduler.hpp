@@ -32,7 +32,7 @@ namespace rain{
             void* user_data = nullptr;
         };
 
-        void add_system(system_desc& desc){
+        void add_system(system_desc desc){
             systems_.push_back(std::move(desc));
             order_dirty_=true;
         }

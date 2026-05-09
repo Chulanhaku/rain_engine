@@ -11,21 +11,21 @@ include(cmake/standard_project_settings.cmake)
 include(cmake/compiler_options.cmake)
 include(cmake/warnings.cmake)
 
-option(rain_build_editor "build rain editor" ON)
+option(rain_build_editor "build rain editor" OFF)
 option(rain_build_samples "build samples" ON)
-option(rain_build_tests "build tests" ON)
+option(rain_build_tests "build tests" OFF)
 
 add_subdirectory(engine)
 
-if(rain_build_editor)
-    add_subdirectory(editor)
-endif()
+# if(rain_build_editor)
+#     add_subdirectory(editor)
+# endif()
 
 if(rain_build_samples)
-    add_subdirectory(smamples)
+    add_subdirectory(samples)
 endif()
 
-if(rain_build_tests)
-    add_subdirectory(tests)
-endif()
+# if(rain_build_tests)
+#     add_subdirectory(tests)
+# endif()
 

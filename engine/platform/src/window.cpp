@@ -68,7 +68,7 @@ namespace rain{
         shutdown_glfw();
     }
 
-    void rain_window::poll_event() {
+    void rain_window::poll_events() {
         glfwPollEvents();
     }
 

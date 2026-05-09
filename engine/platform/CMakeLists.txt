@@ -4,6 +4,7 @@ add_library(rain_platform)
 target_sources(rain_platform
     PRIVATE
         src/timer.cpp
+        src/window.cpp
     PUBLIC 
         include/rain/platform/key_code.hpp
         include/rain/platform/window.hpp
@@ -21,4 +22,4 @@ target_link_libraries(rain_platform
 )
 
 rain_apply_common_options(rain_platform)
-rain_apply_warnings(rain_platform)
+rain_set_project_warnings(rain_platform)

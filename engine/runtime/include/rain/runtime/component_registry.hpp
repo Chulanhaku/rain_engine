@@ -30,7 +30,7 @@ namespace rain{
         }
 
         void remove_all(entity_id entity){
-            for(std::unique_ptr<component_pool_base>&pool :pools_){
+            for(std::unique_ptr<component_pools_base>&pool :pools_){
                 pool->remove_entity(entity);
             }
         }
@@ -72,19 +72,19 @@ namespace rain{
         template<typename component_type>
         [[nodiscard]]component_pool<component_type>&get_or_create_pool(){
             const type_id id = get_type_id<component_type>();
-            const usize* pool_index = type-to_pool_index_.find(id);
+            const usize* pools_index = type_to_pools_index_.find(id);
 
-            if(pool_index!=nullptr){
-                return *static_cast<component_pool_model<component_type>*>(pool_[*pool_index].get())->pool_ptr();
+            if(pools_index!=nullptr){
+                return *static_cast<component_pools_model<component_type>*>(pools_[*pools_index].get())->pools_ptr();
             }
 
-            const uszie new_pool_index = pools_.size();
+            const usize new_pools_index = pools_.size();
 
-            auto pool = std::make_unique<component_pool_model<component_type>>();
-            component_pool<component_type>*raw_pool = pool->pool_ptr();
+            auto pool = std::make_unique<component_pools_model<component_type>>();
+            component_pool<component_type>*raw_pool = pool->pools_ptr();
 
             pools_.push_back(std::move(pool));
-            type_to_pool_index_.insert(id,new_pool_index);
+            type_to_pools_index_.insert(id,new_pools_index);
 
             return *raw_pool;
         }
@@ -92,51 +92,51 @@ namespace rain{
         template<typename component_type>
         [[nodiscard]]component_pool<component_type>* try_get_pool(){
             const type_id id = get_type_id<component_type>();
-            const usize* pool_index = type_to_pool_index_.find(id);
+            const usize* pools_index = type_to_pools_index_.find(id);
 
-            if(pool_index ==nullptr){
+            if(pools_index ==nullptr){
                 return nullptr;
             }
 
-            return *static_cast<component_pool_model<component_type>*>(pool_[*pool_index].get())->pool_ptr();            
+            return static_cast<component_pools_model<component_type>*>(pools_[*pools_index].get())->pools_ptr();            
         }
 
         template<typename component_type>
         [[nodiscard]]const component_pool<component_type>* try_get_pool()const{
             const type_id id = get_type_id<component_type>();
-            const usize* pool_index = type_to_pool_index_.find(id);
+            const usize* pools_index = type_to_pools_index_.find(id);
 
-            if(pool_index ==nullptr){
+            if(pools_index ==nullptr){
                 return nullptr;
             }
 
-            return *static_cast<component_pool_model<component_type>*>(pool_[*pool_index].get())->pool_ptr();            
+            return static_cast<component_pools_model<component_type>*>(pools_[*pools_index].get())->pools_ptr();            
         }
 
     private:
-        struct component_pool_base{
-            virtual ~component_pool_base()=default;
+        struct component_pools_base{
+            virtual ~component_pools_base()=default;
             virtual bool remove_entity(entity_id entity)=0;
         };
 
         template <typename component_type>
-        struct component_pool_model final:component_pool_base{
+        struct component_pools_model final:component_pools_base{
             bool remove_entity(entity_id entity)override{
                 return pool.remove(entity);
             }
 
-            [[nodiscard]]component_pool<component_type>* pool_ptr(){
+            [[nodiscard]]component_pool<component_type>* pools_ptr(){
                 return &pool;
             }
 
-            [[nodiscard]]const component_pool<component_type>* pool_ptr()const {
+            [[nodiscard]]const component_pool<component_type>* pools_ptr()const {
                 return &pool;
             }
 
             component_pool<component_type>pool;
         };
     private:
-        rain_hash_map<type_id,usize>type_to_pool_index_;
-        std::vector<std::unique_ptr<component_pool_base>>pools_;
+        rain_hash_map<type_id,usize>type_to_pools_index_;
+        std::vector<std::unique_ptr<component_pools_base>>pools_;
     };
 }

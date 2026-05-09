@@ -29,24 +29,17 @@ namespace rain{
 
     };
 
-    template<>
-    struct std::hash<rain::gameplay_tag>{
-        std::size_t operator()(rain::gameplay_tag tag)const noexcept{
-            return static_cast<std::size_t>(tag.id.value);
-        }
-    };
-
     class gameplay_tag_registry{
     public:
         gameplay_tag register_tag(std::string_view name){
             const string_id id{name};
-            name_map.insert_or_assign(id,std::string{name});
+            name_map_.insert(id,std::string{name});
             return gameplay_tag{.id=id};
         }
 
 
         [[nodiscard]] std::string_view get_name(gameplay_tag tag)const{
-            const std::string * name = name_map_.try_get(tag.id);
+            const std::string * name = name_map_.find(tag.id);
             if(name==nullptr)return {};
             return *name;
         }
@@ -55,3 +48,10 @@ namespace rain{
         rain_hash_map<string_id,std::string> name_map_;
     };
 }
+
+template<>
+struct std::hash<rain::gameplay_tag>{
+    std::size_t operator()(rain::gameplay_tag tag)const noexcept{
+        return static_cast<std::size_t>(tag.id.value);
+    }
+};

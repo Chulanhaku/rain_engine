@@ -1,4 +1,4 @@
-flatrain#pragma once
+#pragma once
 
 #include <rain/core/container/rain_vector.hpp>
 #include <rain/core/container/rain_hash_map.hpp>

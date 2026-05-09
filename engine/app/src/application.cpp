@@ -6,7 +6,7 @@ namespace rain {
 	application::application(const application_desc& desc) :main_window_(window_desc{
 		.title = desc.title,
 		.width = desc.width,
-		.height = desc.height.
+		.height = desc.height,
 		.resizable = desc.resizable
 		}) 
 	{
@@ -16,7 +16,7 @@ namespace rain {
 	application::~application() {
 		application_context context = make_context(0.0f);
 
-		for (auto layer_iter : layers_.rbegin(); layer_iter != layers_.rend(); layer_iter++) {
+		for (auto layer_iter =layers_.rbegin(); layer_iter != layers_.rend(); layer_iter++) {
 			(*layer_iter)->on_detach(context);
 		}
 
@@ -40,7 +40,7 @@ namespace rain {
 		while (running_ && !main_window_.should_close()) {
 			const auto current_time = clock::now();
 
-			const std::chrono::duration<f32>delta_duration = current - time - previous_time;
+			const std::chrono::duration<f32>delta_duration = current_time - previous_time;
 
 			previous_time = current_time;
 
@@ -49,17 +49,17 @@ namespace rain {
 			main_window_.poll_events();
 			application_context context = make_context(delta_seconds);
 
-			for (std::unique_ptr<layer>& currrent_layer : layers_) {
+			for (std::unique_ptr<layer>& current_layer : layers_) {
 				current_layer->on_update(context);
 			}
 
-			scheduler_.run(target_world, events_, delta_seconds, frame_index_);
+			scheduler_.run(target_world_, events_, delta_seconds, frame_index_);
 
-			events_dispatch_all_queued();
+			events_.dispatch_all_queued();
 
-			main_window_present();
+			main_window_.present();
 
-			+= frame_index_;
+			++frame_index_;
 		}
 
 		running_ = false;
@@ -94,4 +94,26 @@ namespace rain {
 	const event_system& application::events() const {
 		return events_;
 	}
+
+	system_scheduler& application::scheduler()
+    {
+        return scheduler_;
+    }
+
+    const system_scheduler& application::scheduler() const
+    {
+        return scheduler_;
+    }
+
+	application_context application::make_context(f32 delta_seconds)
+    {
+        return application_context{
+            .main_window = &main_window_,
+            .target_world = &target_world_,
+            .events = &events_,
+            .scheduler = &scheduler_,
+            .delta_seconds = delta_seconds,
+            .frame_index = frame_index_
+        };
+    }
 }

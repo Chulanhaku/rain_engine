@@ -23,11 +23,11 @@ namespace rain{
             return components_.contains(entity);
         }
 
-        component_type& get(entity_id){
+        component_type& get(entity_id entity){
             return components_.get(entity);
         }
 
-        const component_type& get(entity_id)const{
+        const component_type& get(entity_id entity)const{
             return components_.get(entity);
         }
 

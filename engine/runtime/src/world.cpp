@@ -4,7 +4,7 @@ namespace rain{
     entity_id world::create_entity(){
         u32 index = invalid_u32;
         if(!free_indices_.empty()){
-            index = free_indices_.bakc();
+            index = free_indices_.back();
             free_indices_.pop_back();
         }
         else{
@@ -20,7 +20,7 @@ namespace rain{
         };
     }
 
-    bool world::destory_entity(entity_id entity){
+    bool world::destroy_entity(entity_id entity){
         if(!is_alive(entity))return false;
         components_.remove_all(entity);
         ++generations_[entity.index];

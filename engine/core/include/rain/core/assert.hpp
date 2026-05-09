@@ -7,7 +7,7 @@
 #define rain_assert(expr)                                            \
     do                                                              \
     {                                                               \
-        if(!(expr))                                                 \
+        if (!(expr))                                                 \
         {                                                           \
             ::rain::log_error("assert failed: " #expr);             \
             std::abort();                                           \

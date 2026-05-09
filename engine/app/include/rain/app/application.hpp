@@ -11,10 +11,10 @@
 #include<string>
 #include<vector>
 
-namespace rian {
-	struct appliaction_desc
+namespace rain {
+	struct application_desc
 	{
-		std:; string title = "rain_engine";
+		std::string title = "rain_engine";
 		u32 width = 1280;
 		u32 height = 720;
 		bool resizable = true;
@@ -58,6 +58,6 @@ namespace rian {
 		std::vector<std::unique_ptr<layer>> layers_;
 
 		bool running_ = false;
-		u64 frame_index = 0;
+		u64 frame_index_ = 0;
 	};
 }
