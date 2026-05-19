@@ -122,6 +122,10 @@ namespace rain{
         return handle_;
     }
 
+    void* rain_window::native_window_handle()const {
+        return glfwGetWin32Window(handle_);
+    }
+
     void rain_window::framebuffer_size_callback(GLFWwindow* glfw_window, int width, int height) {
         auto* target_window = static_cast<rain_window*>(glfwGetWindowUserPointer(glfw_window));
 

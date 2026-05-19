@@ -6,6 +6,8 @@
 #include<rain/core/types.hpp>
 #include<rain/platform/window.hpp>
 #include<rain/runtime/world.hpp>
+#include<rain/render/render_backend.hpp>
+#include<rain/render/render_clear_color.hpp>
 
 #include<memory>
 #include<string>
@@ -18,6 +20,7 @@ namespace rain {
 		u32 width = 1280;
 		u32 height = 720;
 		bool resizable = true;
+		render_clear_color clear_color{};
 	};
 
 	class application {
@@ -47,6 +50,9 @@ namespace rain {
 		[[nodiscard]] system_scheduler& scheduler();
 		[[nodiscard]] const system_scheduler& scheduler() const;
 
+		[[nodiscard]] render_backend& renderer();
+		[[nodiscard]] const render_backend& renderer()const;
+
 	private:
 		[[nodiscard]] application_context make_context(f32 delta_seconds);
 
@@ -59,5 +65,8 @@ namespace rain {
 
 		bool running_ = false;
 		u64 frame_index_ = 0;
+
+		std::unique_ptr<render_backend>renderer_;
+		render_clear_color  clear_color_{};
 	};
 }

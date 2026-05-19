@@ -190,7 +190,13 @@ int main()
         .title = "Rain Engine 0.1 - sample_2d_action",
         .width = 1280,
         .height = 720,
-        .resizable = true
+        .resizable = true,
+        .clear_color = rain::render_clear_color{
+            .r =0.08f,
+            .g=0.10f,
+            .b= 0.16f,
+            .a = 1.0f,
+}
     });
 
     app.push_layer(std::make_unique<sample_game_layer>());

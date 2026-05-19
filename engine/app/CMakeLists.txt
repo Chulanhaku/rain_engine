@@ -21,6 +21,7 @@ target_link_libraries(rain_app
         rain_platform
         rain_runtime
         rain_gameplay
+        rain_render
 )
 
 target_compile_features(rain_app

@@ -43,6 +43,7 @@ namespace rain{
         [[nodiscard]]u32 height()const;
 
         [[nodiscard]]void* native_handle()const;
+        [[nodiscard]]void* native_window_handle()const;
 
     private:
         static void framebuffer_size_callback(GLFWwindow*glfw_window,int width,int height);

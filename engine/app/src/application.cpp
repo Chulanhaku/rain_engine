@@ -8,7 +8,9 @@ namespace rain {
 		.width = desc.width,
 		.height = desc.height,
 		.resizable = desc.resizable
-		}) 
+		})
+		,renderer_(create_d3d11_render_backend(main_window_))
+		,clear_color_(desc.clear_color)
 	{
 		rain::log_info("app start");
 	}
@@ -56,6 +58,10 @@ namespace rain {
 			scheduler_.run(target_world_, events_, delta_seconds, frame_index_);
 
 			events_.dispatch_all_queued();
+
+			renderer_->begin_frame();
+			renderer_->clear(clear_color_);
+			renderer_->end_frame();
 
 			main_window_.present();
 
