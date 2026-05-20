@@ -9,6 +9,7 @@ namespace rain {
 		virtual~render_backend() = default;
 		virtual void begin_frame() = 0;
 		virtual void clear(const render_clear_color& color) = 0;
+		virtual void draw_debug_triangle() = 0;
 		virtual void end_frame() = 0;
 
 		virtual void resize() = 0;

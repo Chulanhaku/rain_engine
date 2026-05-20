@@ -5,6 +5,7 @@
 #include<rain/platform/window.hpp>
 #include<rain/runtime/system_scheduler.hpp>
 #include<rain/runtime/world.hpp>
+#include<rain/render/render_backend.hpp>
 
 namespace rain {
 	struct application_context {
@@ -12,6 +13,7 @@ namespace rain {
 		world* target_world = nullptr;
 		event_system* events = nullptr;
 		system_scheduler* scheduler = nullptr;
+		render_backend* renderer = nullptr;
 
 		f32 delta_seconds = 0.0f;
 		u64 frame_index = 0;
