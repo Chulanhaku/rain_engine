@@ -23,6 +23,7 @@ target_link_libraries(rain_render
     PRIVATE
         d3d11
         dxgi
+        d3dcompiler
 )
 
 target_compile_features(rain_render

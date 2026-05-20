@@ -180,6 +180,9 @@ public:
         }
     }
 
+    void onrender(rain::application_context& context) override {
+        context.renderer->draw_debug_triangle();
+    }
 private:
     rain::entity_id player_;
 };

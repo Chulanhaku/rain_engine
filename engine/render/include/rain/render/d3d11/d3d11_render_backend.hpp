@@ -25,7 +25,11 @@ namespace rain {
 		void resize(u32 width, u32 height)override;
 		u32 width()const override;
 		u32 height()const override;
+		
+		void draw_debug_triangle()override;
 
+		void create_debug_triangle_resources();
+		void compile_shader(const char* source, const char* entry_point, const char* target, ID3DBlob** out_blob);
 	private:
 		void initialize();
 		void shutdown();
@@ -43,6 +47,11 @@ namespace rain {
 		ID3D11DeviceContext* device_context_ = nullptr;
 		IDXGISwapChain* swap_chain_ = nullptr;
 		ID3D11RenderTargetView* render_target_view_ = nullptr;
+
+		ID3D11VertexShader* debug_vertex_shader_ = nullptr;
+		ID3D11PixelShader* debug_pixel_shader_ = nullptr;
+		ID3D11InputLayout* debug_input_layout_ = nullptr;
+		ID3D11Buffer* debug_vertext_buffer_ = nullptr;
 
 		D3D_FEATURE_LEVEL feature_level_ = D3D_FEATURE_LEVEL_11_0;
 	};

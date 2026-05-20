@@ -22,6 +22,8 @@ namespace rain {
 			(*layer_iter)->on_detach(context);
 		}
 
+		renderer_.reset();
+
 		rain::log_info("app down");
 	}
 
@@ -61,6 +63,10 @@ namespace rain {
 
 			renderer_->begin_frame();
 			renderer_->clear(clear_color_);
+
+			for (std::unique_ptr<layer>& current_layer : layers_) {
+				current_layer->on_render(context);
+			}
 			renderer_->end_frame();
 
 			main_window_.present();
@@ -111,12 +117,23 @@ namespace rain {
         return scheduler_;
     }
 
+	render_backend& application::renderer()
+	{
+		return renderer_;
+	}
+
+	const render_backend& application::renderer() const
+	{
+		return renderer_;
+	}
+
 	application_context application::make_context(f32 delta_seconds)
     {
-        return application_context{
-            .main_window = &main_window_,
-            .target_world = &target_world_,
-            .events = &events_,
+		return application_context{
+			.main_window = &main_window_,
+			.target_world = &target_world_,
+			.events = &events_,
+			.renderer = renderer_.get();
             .scheduler = &scheduler_,
             .delta_seconds = delta_seconds,
             .frame_index = frame_index_

@@ -18,5 +18,9 @@ namespace rain {
 			(void)context;
 		}
 
+		virtual void on_render(application_context& context) {
+			(void)context;
+		}
+
 	};
 }
