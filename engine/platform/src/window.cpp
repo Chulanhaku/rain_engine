@@ -5,6 +5,9 @@
 #include <sstream>
 #include<GLFW/glfw3.h>
 
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include<GLFW/glfw3native.h>
+
 namespace rain{
     namespace{
         u32 glfw_context_ref_count = 0;

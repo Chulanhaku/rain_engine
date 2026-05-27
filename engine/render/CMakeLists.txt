@@ -8,11 +8,13 @@ target_sources(rain_render
         include/rain/render/render_backend.hpp
         include/rain/render/render_clear_color.hpp
         include/rain/render/d3d11/d3d11_render_backend.hpp
+        include/rain/render/render_handles.hpp
+        include/rain/render/render_resource_desc.hpp
 )
 
 target_include_directories(rain_render
     PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/includea
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 target_link_libraries(rain_render

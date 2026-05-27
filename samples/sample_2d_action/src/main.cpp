@@ -5,6 +5,7 @@
 #include <rain/platform/key_code.hpp>
 #include <rain/runtime/transform_2d_component.hpp>
 #include <rain/runtime/velocity_2d_component.hpp>
+#include<rain/render/d3d11/d3d11_render_backend.hpp>
 
 #include <cstdio>
 #include <memory>
@@ -180,7 +181,7 @@ public:
         }
     }
 
-    void onrender(rain::application_context& context) override {
+    void on_render(rain::application_context& context) override {
         context.renderer->draw_debug_triangle();
     }
 private:

@@ -8,6 +8,7 @@
 #include<rain/runtime/world.hpp>
 #include<rain/render/render_backend.hpp>
 #include<rain/render/render_clear_color.hpp>
+#include<rain/render/d3d11/d3d11_render_backend.hpp>
 
 #include<memory>
 #include<string>

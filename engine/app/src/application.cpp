@@ -119,12 +119,12 @@ namespace rain {
 
 	render_backend& application::renderer()
 	{
-		return renderer_;
+		return *renderer_;
 	}
 
 	const render_backend& application::renderer() const
 	{
-		return renderer_;
+		return *renderer_;
 	}
 
 	application_context application::make_context(f32 delta_seconds)
@@ -133,8 +133,9 @@ namespace rain {
 			.main_window = &main_window_,
 			.target_world = &target_world_,
 			.events = &events_,
-			.renderer = renderer_.get();
             .scheduler = &scheduler_,
+			.renderer = renderer_.get(),
+
             .delta_seconds = delta_seconds,
             .frame_index = frame_index_
         };
