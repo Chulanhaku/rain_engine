@@ -25,6 +25,8 @@ namespace rain {
 		virtual void set_pipeline_state(pipeline_state_handle handle) = 0;
 		virtual void set_vertex_buffer(render_buffer_handle handle) = 0;
 		virtual void draw(u32 vertex_count,u32 start_vertex) = 0;
+		virtual void update_buffer(render_buffer_handle handle, const void* data, usize size_bytes) = 0;
+
 
 		[[nodiscard]] virtual u32 width()const = 0;
 		[[nodiscard]] virtual u32 height()const = 0;

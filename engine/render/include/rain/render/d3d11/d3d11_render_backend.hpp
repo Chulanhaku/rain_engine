@@ -38,7 +38,7 @@ namespace rain {
 		pipeline_state_handle create_pipeline_state(const pipeline_state_desc& desc)override;
 		void set_pipeline_state(pipeline_state_handle handle)override;
 		void set_vertex_buffer(render_buffer_handle handle)override;
-
+		void d3d11_render_backend::update_buffer(render_buffer_handle handle.const void* data, usize size_bytes);
 		void draw(u32 vertex_count, u32 start_vertex)override;
 
 	private:
@@ -67,7 +67,11 @@ namespace rain {
 
 			ID3D11Buffer* buffer = nullptr;
 			render_buffer_bind bind = render_buffer_bind::vertex_buffer;
+			render_buffer_usage = render_buffer_usage::immutable;
+			
+			usize size_bytes = 0;
 			u32 stride_bytes=0;
+	
 		};
 
 		struct d3d11_pipeline_state {

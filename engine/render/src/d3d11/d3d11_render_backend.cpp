@@ -281,12 +281,16 @@ float4 main(pixel_input input):SV_TARGET{
 		rain_assert(desc.bind==render_buffer_bind::vertex_buffer);
 		rain_assert(desc.size_bytes > 0);
 		rain_assert(desc.stride_bytes>0);
-		rain_assert(desc.initial_data!=nullptr);
+
+		if(desc.usage == render_buffer_usage::immutable)rain_assert(desc.initial_data!=nullptr);
 
 		d3d11_render_buffer buffer;
 		buffer.name = desc.name;
 		buffer.bind = desc.bind;
 		buffer.stride_bytes = desc.stride_bytes;
+		buffer.usage = desc.usage;
+		buffer.size_bytes = desc.size_bytes;
+
 
 		D3D11_BUFFER_DESC buffer_desc{};
 		buffer_desc.ByteWidth = static_cast<UINT>(desc.size_bytes);
@@ -314,6 +318,29 @@ float4 main(pixel_input input):SV_TARGET{
 			.generation = 0
 		};
 
+	}
+
+	void d3d11_render_backend::update_buffer(render_buffer_handle handle.const void* data,usize size_bytes) {
+		if (!handle.is_valid() || handle.index >= buffers_.size())return;
+
+		if (data == nullptr || size_bytes == 0) return;
+
+		d3d11_render_buffer& buffer = buffers_[handle.index];
+
+		rain_assert(buffer.buffer!=nullptr);
+		rain_assert(buffer.usage == render_buffer_usage::dynamic);
+		rain_assert(size_bytes <= buffer.size_bytes);
+
+		D3D11_MAPPED_SUBRESOURCE mapped_resource{};
+
+		const HRESULT map_result = device_context_->Map(buffer.buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_resource);
+
+		rain_assert(!failed(map_result));
+		rain_assert(mapped_resource.pData != nullptr);
+
+		std::memcpy(mapped_resource.pData, data, size_bytes);
+
+		device_context_->Unmap(buffer.buffer, 0);
 	}
 
 	pipeline_state_handle d3d11_render_backend::create_pipeline_state(const pipeline_state_desc& desc) {
