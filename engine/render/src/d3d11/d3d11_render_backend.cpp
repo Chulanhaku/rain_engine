@@ -282,8 +282,12 @@ float4 main(pixel_input input):SV_TARGET{
 		rain_assert(desc.size_bytes > 0);
 		rain_assert(desc.stride_bytes>0);
 
-		if(desc.usage == render_buffer_usage::immutable)rain_assert(desc.initial_data!=nullptr);
+		if (desc.usage == render_buffer_usage::immutable) {
+			rain_assert(desc.initial_data != nullptr);
+		}
+		else {
 
+		}
 		d3d11_render_buffer buffer;
 		buffer.name = desc.name;
 		buffer.bind = desc.bind;
@@ -301,9 +305,15 @@ float4 main(pixel_input input):SV_TARGET{
 		buffer_desc.StructureByteStride = desc.stride_bytes;
 
 		D3D11_SUBRESOURCE_DATA initial_data{};
-		initial_data.pSysMem = desc.initial_data;
+		D3D11_SUBRESOURCE_DATA* initial_data_ptr = nullptr;
 
-		const HRESULT create_buffer_result = device_->CreateBuffer(&buffer_desc,&initial_data,&buffer.buffer);
+		if (desc.initial_data != nullptr)
+		{
+			initial_data.pSysMem = desc.initial_data;
+			initial_data_ptr = &initial_data;
+		}
+
+		const HRESULT create_buffer_result = device_->CreateBuffer(&buffer_desc, initial_data_ptr,&buffer.buffer);
 
 		rain_assert(!failed(create_buffer_result));
 		rain_assert(buffer.buffer != nullptr);
@@ -320,7 +330,7 @@ float4 main(pixel_input input):SV_TARGET{
 
 	}
 
-	void d3d11_render_backend::update_buffer(render_buffer_handle handle.const void* data,usize size_bytes) {
+	void d3d11_render_backend::update_buffer(render_buffer_handle handle,const void* data,usize size_bytes) {
 		if (!handle.is_valid() || handle.index >= buffers_.size())return;
 
 		if (data == nullptr || size_bytes == 0) return;

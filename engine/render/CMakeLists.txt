@@ -3,14 +3,16 @@ add_library(rain_render)
 target_sources(rain_render
     PRIVATE
         src/d3d11/d3d11_render_backend.cpp
-
+        src/sprite_renderer_2d.cpp
     PUBLIC
         include/rain/render/render_backend.hpp
         include/rain/render/render_clear_color.hpp
         include/rain/render/d3d11/d3d11_render_backend.hpp
         include/rain/render/render_handles.hpp
         include/rain/render/render_resource_desc.hpp
+        include/rain/render/sprite_renderer_2d.hpp
 )
+
 
 target_include_directories(rain_render
     PUBLIC
