@@ -14,6 +14,8 @@ target_sources(rain_core
         include/rain/core/type_id.hpp
         include/rain/core/handle.hpp
 
+        include/rain/core/math/vec2.hpp
+
         include/rain/core/container/rain_sparse_set.hpp
         include/rain/core/container/rain_vector.hpp
         include/rain/core/container/rain_hash_map.hpp

@@ -49,10 +49,17 @@ float4 main(pixel_input input) : SV_TARGET
 	}
 
 	void sprite_renderer_2d::begin() {
+		active_camera_ = nullptr;
 		vertices_.clear();
 	}
 
-	void sprite_renderer_2d::draw_rect(const sprite_rect& rect, const sprite_color& color) {
+	void sprite_renderer_2d::begin(const camera_2d&camera) {
+		active_camera_ = &camera;
+		vertices_.clear();
+	}
+
+
+	void sprite_renderer_2d::draw_rect_ndc(const sprite_rect_ndc& rect, const sprite_color& color) {
 		if (vertices_.size() + 6 > max_vertices_)return;
 
 		const f32 left = rect.x;
@@ -60,34 +67,81 @@ float4 main(pixel_input input) : SV_TARGET
 		const f32 top = rect.y;
 		const f32 bottom = rect.y - rect.height;
 
-		const sprite_vertex top_left{
-			.position = {left,top},
-			.color = {color.r,color.g,color.b,color.a}
-		};
+		push_quad_ndc(
+			vec2{ .x = left, .y = top },
+			vec2{ .x = right, .y = top },
+			vec2{ .x = right, .y = bottom },
+			vec2{ .x = left, .y = bottom },
+			color
+		);
 
-		const sprite_vertex top_right{
-			.position = {right,top},
-			.color = {color.r,color.g,color.b,color.a}
-		};
+		//const sprite_vertex top_left{
+		//	.position = {left,top},
+		//	.color = {color.r,color.g,color.b,color.a}
+		//};
 
-		const sprite_vertex bottom_right{
-			.position = {right,bottom},
-			.color = {color.r,color.g,color.b,color.a}
-		};
+		//const sprite_vertex top_right{
+		//	.position = {right,top},
+		//	.color = {color.r,color.g,color.b,color.a}
+		//};
 
-		const sprite_vertex bottom_left{
-			.position = {left,bottom},
-			.color = {color.r,color.g,color.b,color.a}
-		};
+		//const sprite_vertex bottom_right{
+		//	.position = {right,bottom},
+		//	.color = {color.r,color.g,color.b,color.a}
+		//};
 
-		vertices_.push_back(top_left);
-		vertices_.push_back(top_right);
-		vertices_.push_back(bottom_right);
+		//const sprite_vertex bottom_left{
+		//	.position = {left,bottom},
+		//	.color = {color.r,color.g,color.b,color.a}
+		//};
 
-		vertices_.push_back(top_left);
-		vertices_.push_back(bottom_right);
-		vertices_.push_back(bottom_left);
+		//vertices_.push_back(top_left);
+		//vertices_.push_back(top_right);
+		//vertices_.push_back(bottom_right);
+
+		//vertices_.push_back(top_left);
+		//vertices_.push_back(bottom_right);
+		//vertices_.push_back(bottom_left);
 	}
+
+	void sprite_renderer_2d::draw_rect_world(
+		const sprite_rect_world& rect,
+		const sprite_color& color)
+	{
+		rain_assert(active_camera_ != nullptr);
+
+		const f32 half_width = rect.size.x * 0.5f;
+		const f32 half_height = rect.size.y * 0.5f;
+
+		const vec2 top_left_world{
+			.x = rect.center.x - half_width,
+			.y = rect.center.y + half_height
+		};
+
+		const vec2 top_right_world{
+			.x = rect.center.x + half_width,
+			.y = rect.center.y + half_height
+		};
+
+		const vec2 bottom_right_world{
+			.x = rect.center.x + half_width,
+			.y = rect.center.y - half_height
+		};
+
+		const vec2 bottom_left_world{
+			.x = rect.center.x - half_width,
+			.y = rect.center.y - half_height
+		};
+
+		push_quad_ndc(
+			active_camera_->world_to_ndc(top_left_world),
+			active_camera_->world_to_ndc(top_right_world),
+			active_camera_->world_to_ndc(bottom_right_world),
+			active_camera_->world_to_ndc(bottom_left_world),
+			color
+		);
+	}
+
 
 	void sprite_renderer_2d::end() {
 		if (vertices_.empty())return;
@@ -107,6 +161,39 @@ float4 main(pixel_input input) : SV_TARGET
 
 	u32 sprite_renderer_2d::vertex_count()const {
 		return static_cast<u32>(vertices_.size());
+	}
+
+	void sprite_renderer_2d::push_quad_ndc(vec2 top_left, vec2 top_right, vec2 bottom_right, vec2 bottom_left, const sprite_color& color) {
+		if (vertices_.size() + 6 > max_vertices_)return;
+
+		const sprite_vertex vertex_top_left{
+			.position = {top_left.x,top_left.y},
+			.color = {color.r,color.g,color.b,color.a}
+		};
+
+		const sprite_vertex vertex_top_right{
+			.position = {top_right.x,top_right.y},
+			.color = {color.r,color.g,color.b,color.a}
+		};
+
+		const sprite_vertex vertex_bottom_right{
+			.position = {bottom_right.x,bottom_right.y},
+			.color = {color.r,color.g,color.b,color.a}
+		};
+
+		const sprite_vertex vertex_bottom_left{
+			.position = {bottom_left.x,bottom_left.y},
+			.color = {color.r,color.g,color.b,color.a}
+		};
+
+		vertices_.push_back(vertex_top_left);
+		vertices_.push_back(vertex_top_right);
+		vertices_.push_back(vertex_bottom_right);
+
+		vertices_.push_back(vertex_top_left);
+		vertices_.push_back(vertex_bottom_right);
+		vertices_.push_back(vertex_bottom_left);
+
 	}
 
 	void sprite_renderer_2d::create_resources() {

@@ -5,9 +5,11 @@ target_sources(rain_platform
     PRIVATE
         src/timer.cpp
         src/window.cpp
+        src/input_action.cpp
     PUBLIC 
         include/rain/platform/key_code.hpp
         include/rain/platform/window.hpp
+        include/rain/platform/input_action.hpp
 )
 
 target_include_directories(rain_platform

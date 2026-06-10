@@ -6,6 +6,7 @@
 #include<rain/runtime/system_scheduler.hpp>
 #include<rain/runtime/world.hpp>
 #include<rain/render/render_backend.hpp>
+#include<rain/platform/input_action.hpp>
 
 namespace rain {
 	struct application_context {
@@ -17,5 +18,7 @@ namespace rain {
 
 		f32 delta_seconds = 0.0f;
 		u64 frame_index = 0;
+
+		input_action_map* input = nullptr;
 	};
 }

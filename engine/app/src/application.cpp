@@ -51,6 +51,9 @@ namespace rain {
 			const f32 delta_seconds = delta_duration.count();
 
 			main_window_.poll_events();
+
+			input_.update(main_window_);
+
 			application_context context = make_context(delta_seconds);
 
 			for (std::unique_ptr<layer>& current_layer : layers_) {
@@ -127,6 +130,14 @@ namespace rain {
 		return *renderer_;
 	}
 
+	input_action_map& application::input() {
+		return input_;
+	}
+
+	const input_action_map& application::input() const{
+		return input_;
+	}
+
 	application_context application::make_context(f32 delta_seconds)
     {
 		return application_context{
@@ -137,7 +148,8 @@ namespace rain {
 			.renderer = renderer_.get(),
 
             .delta_seconds = delta_seconds,
-            .frame_index = frame_index_
+            .frame_index = frame_index_,
+			.input = &input_
         };
     }
 }

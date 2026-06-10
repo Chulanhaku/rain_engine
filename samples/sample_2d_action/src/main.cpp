@@ -210,48 +210,119 @@
 
 #include <rain/app/application.hpp>
 #include <rain/app/layer.hpp>
+#include <rain/platform/input_action.hpp>
 #include <rain/platform/key_code.hpp>
+#include <rain/render/camera_2d.hpp>
 #include <rain/render/render_clear_color.hpp>
-#include <rain/render/sprite_renderer_2d.hpp>
+#include <rain/render/render_system_2d.hpp>
+#include <rain/render/sprite_2d_component.hpp>
+#include <rain/runtime/movement_system_2d.hpp>
+#include <rain/runtime/transform_2d_component.hpp>
+#include <rain/runtime/velocity_2d_component.hpp>
 
-#include <cmath>
 #include <memory>
+
+static void sample_bounce_system(rain::system_context& context, void* user_data)
+{
+    (void)user_data;
+
+    if (context.target_world == nullptr)
+    {
+        return;
+    }
+
+    rain::world& target_world = *context.target_world;
+
+    auto* transform_pool =
+        target_world.try_get_component_pool<rain::transform_2d_component>();
+
+    auto* velocity_pool =
+        target_world.try_get_component_pool<rain::velocity_2d_component>();
+
+    if (transform_pool == nullptr || velocity_pool == nullptr)
+    {
+        return;
+    }
+
+    const auto& entities = velocity_pool->entities();
+
+    for (rain::usize i = 0; i < velocity_pool->size(); ++i)
+    {
+        const rain::entity_id entity = entities[i];
+
+        if (!transform_pool->has(entity))
+        {
+            continue;
+        }
+
+        rain::transform_2d_component& transform =
+            transform_pool->get(entity);
+
+        rain::velocity_2d_component& velocity =
+            velocity_pool->get(entity);
+
+        constexpr rain::f32 min_x = -300.0f;
+        constexpr rain::f32 max_x = 300.0f;
+
+        if (transform.position.x < min_x)
+        {
+            transform.position.x = min_x;
+            velocity.x = -velocity.x;
+        }
+
+        if (transform.position.x > max_x)
+        {
+            transform.position.x = max_x;
+            velocity.x = -velocity.x;
+        }
+    }
+}
 
 class sample_layer final : public rain::layer
 {
 public:
     void on_attach(rain::application_context& context) override
     {
-        sprite_renderer_ = std::make_unique<rain::sprite_renderer_2d>(
+        bind_input_actions(*context.input);
+
+        render_system_ = std::make_unique<rain::render_system_2d>(
             *context.renderer,
-            1024
+            4096
         );
-    }
 
-    void on_update(rain::application_context& context) override
-    {
-        if (context.main_window->is_key_down(rain::key_code::escape))
-        {
-            context.main_window->request_close();
-        }
-    }
+        camera_ = rain::camera_2d(rain::camera_2d_desc{
+            .position = rain::vec2{.x = 0.0f, .y = 0.0f},
+            .viewport_width = static_cast<rain::f32>(context.renderer->width()),
+            .viewport_height = static_cast<rain::f32>(context.renderer->height()),
+            .zoom = 1.0f
+        });
 
-    void on_render(rain::application_context& context) override
-    {
-        (void)context;
+        context.scheduler->add_system({
+            .system_name = "system.movement_2d",
+            .owner_name = "runtime",
+            .phase_name = "update",
+            .priority = 0,
+            .enabled = true,
+            .function = &rain::movement_system_2d,
+            .user_data = nullptr
+        });
 
-        const float time = static_cast<float>(context.frame_index) * 0.016f;
-        const float x = std::sin(time) * 0.45f;
+        context.scheduler->add_system({
+            .system_name = "sample.bounce",
+            .owner_name = "sample_2d_action",
+            .phase_name = "update",
+            .priority = -10,
+            .enabled = true,
+            .function = &sample_bounce_system,
+            .user_data = nullptr
+        });
 
-        sprite_renderer_->begin();
-
-        sprite_renderer_->draw_rect(
-            rain::sprite_rect{
-                .x = x - 0.15f,
-                .y = 0.20f,
-                .width = 0.30f,
-                .height = 0.30f
-            },
+        moving_entity_ = create_rect(
+            *context.target_world,
+            0.0f,
+            80.0f,
+            120.0f,
+            120.0f,
             rain::sprite_color{
                 .r = 0.20f,
                 .g = 0.75f,
@@ -260,13 +331,20 @@ public:
             }
         );
 
-        sprite_renderer_->draw_rect(
-            rain::sprite_rect{
-                .x = -0.65f,
-                .y = -0.20f,
-                .width = 0.25f,
-                .height = 0.25f
-            },
+        context.target_world->add_component<rain::velocity_2d_component>(
+            moving_entity_,
+            rain::velocity_2d_component{
+                .x = 180.0f,
+                .y = 0.0f
+            }
+        );
+
+        create_rect(
+            *context.target_world,
+            -260.0f,
+            -120.0f,
+            100.0f,
+            100.0f,
             rain::sprite_color{
                 .r = 1.00f,
                 .g = 0.45f,
@@ -275,13 +353,12 @@ public:
             }
         );
 
-        sprite_renderer_->draw_rect(
-            rain::sprite_rect{
-                .x = 0.40f,
-                .y = -0.10f,
-                .width = 0.35f,
-                .height = 0.20f
-            },
+        create_rect(
+            *context.target_world,
+            240.0f,
+            -80.0f,
+            180.0f,
+            90.0f,
             rain::sprite_color{
                 .r = 0.35f,
                 .g = 1.00f,
@@ -290,17 +367,127 @@ public:
             }
         );
 
-        sprite_renderer_->end();
+        create_rect(
+            *context.target_world,
+            0.0f,
+            0.0f,
+            40.0f,
+            40.0f,
+            rain::sprite_color{
+                .r = 1.00f,
+                .g = 1.00f,
+                .b = 1.00f,
+                .a = 1.00f
+            }
+        );
+    }
+
+    void on_update(rain::application_context& context) override
+    {
+        if (context.input->is_pressed(action_quit_))
+        {
+            context.main_window->request_close();
+            return;
+        }
+
+        camera_.set_viewport_size(
+            static_cast<rain::f32>(context.renderer->width()),
+            static_cast<rain::f32>(context.renderer->height())
+        );
+
+        update_camera(context);
+    }
+
+    void on_render(rain::application_context& context) override
+    {
+        render_system_->render(*context.target_world, camera_);
     }
 
 private:
-    std::unique_ptr<rain::sprite_renderer_2d> sprite_renderer_;
+    void bind_input_actions(rain::input_action_map& input)
+    {
+        input.bind_axis(action_camera_move_x_, rain::key_code::a, -1.0f);
+        input.bind_axis(action_camera_move_x_, rain::key_code::d, 1.0f);
+
+        input.bind_axis(action_camera_move_y_, rain::key_code::s, -1.0f);
+        input.bind_axis(action_camera_move_y_, rain::key_code::w, 1.0f);
+
+        input.bind_button(action_quit_, rain::key_code::escape);
+    }
+
+    static rain::entity_id create_rect(
+        rain::world& target_world,
+        rain::f32 x,
+        rain::f32 y,
+        rain::f32 width,
+        rain::f32 height,
+        const rain::sprite_color& color)
+    {
+        rain::entity_id entity = target_world.create_entity();
+
+        target_world.add_component<rain::transform_2d_component>(
+            entity,
+            rain::transform_2d_component{
+                .position = rain::vec2{
+                    .x = x,
+                    .y = y
+                },
+                .rotation = 0.0f,
+                .scale = rain::vec2{
+                    .x = 1.0f,
+                    .y = 1.0f
+                }
+            }
+        );
+
+        target_world.add_component<rain::sprite_2d_component>(
+            entity,
+            rain::sprite_2d_component{
+                .size = rain::vec2{
+                    .x = width,
+                    .y = height
+                },
+                .color = color,
+                .visible = true
+            }
+        );
+
+        return entity;
+    }
+
+    void update_camera(rain::application_context& context)
+    {
+        rain::vec2 camera_position = camera_.position();
+
+        const rain::f32 camera_speed = 300.0f * context.delta_seconds;
+
+        const rain::f32 move_x =
+            context.input->get_axis(action_camera_move_x_);
+
+        const rain::f32 move_y =
+            context.input->get_axis(action_camera_move_y_);
+
+        camera_position.x += move_x * camera_speed;
+        camera_position.y += move_y * camera_speed;
+
+        camera_.set_position(camera_position);
+    }
+
+private:
+    rain::string_id action_camera_move_x_{"camera.move_x"};
+    rain::string_id action_camera_move_y_{"camera.move_y"};
+    rain::string_id action_quit_{"app.quit"};
+
+    std::unique_ptr<rain::render_system_2d> render_system_;
+
+    rain::camera_2d camera_;
+    rain::entity_id moving_entity_;
 };
 
 int main()
 {
     rain::application app({
-        .title = "Rain Engine 0.1 - Sprite Renderer 2D",
+        .title = "Rain Engine 0.1 - Input Action",
         .width = 1280,
         .height = 720,
         .resizable = true,

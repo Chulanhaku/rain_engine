@@ -1,9 +1,9 @@
 #pragma once
+
+#include<rain/core/math/vec2.hpp>
+#include<rain/core/types.hpp>
+
 namespace rain{
-    struct vec2{
-        float x =0.0f;
-        float y =0.0f;
-    };
 
     struct transform_2d_component{
         vec2 position;

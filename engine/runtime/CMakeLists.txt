@@ -4,6 +4,7 @@ target_sources(rain_runtime
     PRIVATE
         src/entity.cpp
         src/world.cpp
+        src/movement_system_2d.cpp
         #src/component_storage.cpp
         #src/scene.cpp
     PUBLIC
@@ -14,6 +15,7 @@ target_sources(rain_runtime
         include/rain/runtime/system_scheduler.hpp
         include/rain/runtime/transform_2d_component.hpp
         include/rain/runtime/velocity_2d_component.hpp
+        include/rain/runtime/movement_system_2d.hpp
 )
 
 target_include_directories(rain_runtime

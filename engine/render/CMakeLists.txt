@@ -4,6 +4,8 @@ target_sources(rain_render
     PRIVATE
         src/d3d11/d3d11_render_backend.cpp
         src/sprite_renderer_2d.cpp
+        src/render_system_2d.cpp
+
     PUBLIC
         include/rain/render/render_backend.hpp
         include/rain/render/render_clear_color.hpp
@@ -11,6 +13,9 @@ target_sources(rain_render
         include/rain/render/render_handles.hpp
         include/rain/render/render_resource_desc.hpp
         include/rain/render/sprite_renderer_2d.hpp
+        include/rain/render/camera_2d.hpp
+        include/rain/render/render_system_2d.hpp
+        include/rain/render/sprite_2d_component.hpp
 )
 
 
@@ -23,7 +28,7 @@ target_link_libraries(rain_render
     PUBLIC
         rain_core
         rain_platform
-
+        rain_runtime
     PRIVATE
         d3d11
         dxgi

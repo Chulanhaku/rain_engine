@@ -54,6 +54,9 @@ namespace rain {
 		[[nodiscard]] render_backend& renderer();
 		[[nodiscard]] const render_backend& renderer()const;
 
+		[[nodiscard]] input_action_map& input();
+		[[nodiscard]] const input_action_map& input()const;
+
 	private:
 		[[nodiscard]] application_context make_context(f32 delta_seconds);
 
@@ -69,5 +72,7 @@ namespace rain {
 
 		std::unique_ptr<render_backend>renderer_;
 		render_clear_color  clear_color_{};
+
+		input_action_map input_;
 	};
 }

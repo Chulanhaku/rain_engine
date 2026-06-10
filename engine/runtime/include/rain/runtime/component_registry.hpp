@@ -26,7 +26,7 @@ namespace rain{
 
             if(pool ==nullptr)return false;
 
-            return pool->remove(this);
+            return pool->remove(entity);
         }
 
         void remove_all(entity_id entity){
@@ -38,7 +38,7 @@ namespace rain{
         template<typename component_type>
         [[nodiscard]]bool has (entity_id entity)const{
             const component_pool<component_type> *pool = try_get_pool<component_type>();
-            if(pool=nullptr)return false;
+            if(pool==nullptr)return false;
             
             return pool->has(entity);
         }
@@ -54,11 +54,19 @@ namespace rain{
 
         template<typename component_type>
         [[nodiscard]]const component_type&get(entity_id entity)const{
-            component_pool<component_type>*pool = try_get_pool<component_type>();
+            const component_pool<component_type>*pool = try_get_pool<component_type>();
             rain_assert(pool!= nullptr);
             rain_assert(pool->has(entity));
 
             return pool->get(entity);
+        }
+
+        template<typename component_type>
+        [[nodiscard]]component_type* try_get(entity_id entity){
+            component_pool<component_type>*pool = try_get_pool<component_type>();
+            if(pool==nullptr||!pool->has(entity))return nullptr;
+
+            return &pool->get(entity);
         }
 
         template<typename component_type>
