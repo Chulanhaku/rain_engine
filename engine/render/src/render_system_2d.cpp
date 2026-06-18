@@ -23,6 +23,9 @@ namespace rain {
 
 		for (usize i = 0; i < sprite_pool->size(); i++) {
 			const entity_id entity = entities[i];
+
+			if (!target_world.is_entity_active(entity))continue;
+
 			const sprite_2d_component& sprite = sprites[i];
 
 			if (!sprite.visible)continue;

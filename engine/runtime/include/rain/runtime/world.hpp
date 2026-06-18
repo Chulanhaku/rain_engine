@@ -3,18 +3,44 @@
 #include <rain/core/assert.hpp>
 #include <rain/runtime/component_registry.hpp>
 #include <rain/runtime/entity.hpp>
+#include<rain/core/string_id.hpp>
 
 #include <utility>
 #include <vector>
 
 namespace rain
 {
+    struct world_entity_desc {
+        string_id name;
+        bool active = true;
+    };
+
+    struct world_entity_meta {
+        string_id name;
+        bool active = true;
+    };
+
+
     class world
     {
     public:
         entity_id create_entity();
+
+        entity_id create_entity(const world_entity_desc& desc);
+
         bool destroy_entity(entity_id entity);
+
+
         bool is_alive(entity_id entity) const;
+        bool is_entity_active(entity_id entity)const;
+
+        void set_entity_active(entity_id entity,bool active);
+
+        void set_entity_name(entity_id entity, string_id name);
+
+        [[nodiscard]] string_id entity_name(entity_id entity)const;
+
+        [[nodiscard]] entity_id find_entity_by_name(string_id name)const;
 
         [[nodiscard]] u32 living_entity_count() const;
 
@@ -102,7 +128,15 @@ namespace rain
         }
 
     private:
-        std::vector<u32> generations_;
+        struct entity_record {
+            u32 generation = 0;
+            bool alive = false;
+        };
+
+    private:
+        std::vector<entity_record>records_;
+        std::vector<world_entity_meta>metadatas_;
+
         std::vector<u32> free_indices_;
         u32 living_count_ = 0;
 

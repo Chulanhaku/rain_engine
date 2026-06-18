@@ -2,35 +2,122 @@
 
 namespace rain{
     entity_id world::create_entity(){
+        return create_entity(world_entity_desc{});
+    }
+
+    entity_id world::create_entity(const world_entity_desc& desc) {
         u32 index = invalid_u32;
-        if(!free_indices_.empty()){
+        if (!free_indices_.empty()) {
             index = free_indices_.back();
             free_indices_.pop_back();
+
+            entity_record& record = records_[index];
+            record.alive = true;
+
+            metadatas_[index] = world_entity_meta{
+                .name = desc.name,
+                .active = desc.active
+            };
         }
-        else{
-            index = static_cast<u32>(generations_.size());
-            generations_.push_back(0);
+        else {
+            index = static_cast<u32>(records_.size());
+
+            records_.push_back(entity_record{
+                .generation = 0,
+                .alive = true
+            });
+
+            metadatas_.push_back(world_entity_meta{
+                .name = desc.name,
+                .active = desc.active
+            });
         }
 
         ++living_count_;
 
         return entity_id{
             .index = index,
-            .generation = generations_[index]
+            .generation = records_[index].generation
         };
     }
 
+
     bool world::destroy_entity(entity_id entity){
         if(!is_alive(entity))return false;
+
+        entity_record& record = records_[entity.index];
+
+        record.alive = false;
+
+        ++record.generation;
+
+        metadatas_[entity.index] = world_entity_meta{};
+
         components_.remove_all(entity);
-        ++generations_[entity.index];
         free_indices_.push_back(entity.index);
         --living_count_;
         return true;
     }
 
-    bool world::is_alive(entity_id entity)const{
-        return entity.index<generations_.size()&&generations_[entity.index]==entity.generation;
+    bool world::is_alive(entity_id entity) const
+    {
+        if (!entity.is_valid() || entity.index >= records_.size())
+        {
+            return false;
+        }
+
+        const entity_record& record = records_[entity.index];
+
+        return record.alive && record.generation == entity.generation;
+    }
+
+    bool world::is_entity_active(entity_id entity) const
+    {
+        if (!is_alive(entity))
+        {
+            return false;
+        }
+
+        return metadatas_[entity.index].active;
+    }
+
+    void world::set_entity_active(entity_id entity, bool active) {
+        if (!is_alive(entity))return;
+
+        metadatas_[entity.index].active = active;
+    }
+
+    void world::set_entity_name(entity_id entity, string_id name) {
+        if (!is_alive(entity))return;
+
+        metadatas_[entity.index].name = name;
+    }
+
+
+    string_id world::entity_name(entity_id entity)const {
+        if (!is_alive(entity))return string_id{};
+
+        return metadatas_[entity.index].name;
+    }
+
+    entity_id world::find_entity_by_name(string_id name)const {
+        for (u32 index = 0; index < static_cast<u32>(records_.size()); ++index) {
+            const entity_record& record = records_[index];
+
+            if (!record.alive)continue;
+
+            const world_entity_meta& meta = metadatas_[index];
+
+            if (!meta.active)continue;
+
+            if (meta.name == name) {
+                return entity_id{
+                    .index = index,
+                    .generation = record.generation
+                };
+            }
+        }
+        return entity_id{};
     }
 
     u32 world::living_entity_count()const{

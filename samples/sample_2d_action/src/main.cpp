@@ -319,6 +319,7 @@ public:
 
         moving_entity_ = create_rect(
             *context.target_world,
+            rain::string_id{"moving_rect"},
             0.0f,
             80.0f,
             120.0f,
@@ -341,6 +342,7 @@ public:
 
         create_rect(
             *context.target_world,
+            rain::string_id{"left_rect"},
             -260.0f,
             -120.0f,
             100.0f,
@@ -355,6 +357,7 @@ public:
 
         create_rect(
             *context.target_world,
+            rain::string_id{"right_rect"},
             240.0f,
             -80.0f,
             180.0f,
@@ -369,6 +372,7 @@ public:
 
         create_rect(
             *context.target_world,
+            rain::string_id{"center_rect"},
             0.0f,
             0.0f,
             40.0f,
@@ -417,13 +421,17 @@ private:
 
     static rain::entity_id create_rect(
         rain::world& target_world,
+        rain::string_id name,
         rain::f32 x,
         rain::f32 y,
         rain::f32 width,
         rain::f32 height,
         const rain::sprite_color& color)
     {
-        rain::entity_id entity = target_world.create_entity();
+        rain::entity_id entity = target_world.create_entity(rain::world_entity_desc{
+            .name = name,
+            .active = true
+        });
 
         target_world.add_component<rain::transform_2d_component>(
             entity,
