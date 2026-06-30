@@ -1,4 +1,5 @@
 #include <rain/runtime/world.hpp>
+#include<rain/runtime/tag_component.hpp>
 
 namespace rain{
     entity_id world::create_entity(){
@@ -124,4 +125,72 @@ namespace rain{
         return living_count_;
     }
 
+    void world::add_tag(entity_id entity, tag_id tag) {
+        if(!is_alive(entity)||!tag.is_valid())return ;
+        tag_component* component =try_get_component<tag_component>(entity);
+
+        if(component==nullptr)component = &add_component<tag_component>(entity);
+
+        component->tags.add(tag);
+    }
+
+
+
+    bool world::remove_tag(entity_id entity, tag_id tag) {
+        if (!is_alive(entity) || !tag.is_valid())return false;
+        tag_component* component = try_get_component<tag_component>(entity);
+        if (component == nullptr)return false;
+        return component->tags.remove(tag);
+    }
+
+    bool world::has_tag(entity_id entity, tag_id tag)const {
+        if (!is_alive(entity) || !tag.is_valid())return false;
+
+        const tag_component* component = try_get_component<tag_component>(entity);
+
+        if (component == nullptr)return false;
+
+        return component->tags.has(tag);
+
+    }
+
+    u32 world::tag_count(entity_id entity, tag_id tag)const {
+        if (!is_alive(entity) || !tag.is_valid())return 0;
+
+        const tag_component* component = try_get_component<tag_component>(entity);
+
+        if (component == nullptr)return 0;
+
+        return component->tags.count(tag);
+    }
+
+    bool world::matches_tags(entity_id entity, const tag_query& query)const {
+        if (!is_alive(entity))return false;
+
+        const tag_component* component = try_get_component<tag_component>(entity);
+
+        if (component == nullptr)return false;
+
+        return query.matches(component->tags);
+    }
+
+    tag_container* world::try_get_tags(entity_id entity) {
+        if (!is_alive(entity))return nullptr;
+
+        tag_component* component = try_get_component<tag_component>(entity);
+
+        if (component == nullptr)return nullptr;
+
+        return &component->tags;
+    }
+
+    const tag_container* world::try_get_tags(entity_id entity)const {
+        if (!is_alive(entity))return nullptr;
+
+        const tag_component* component = try_get_component<tag_component>(entity);
+
+        if (component == nullptr)return nullptr;
+
+        return &component->tags;
+    }
 }

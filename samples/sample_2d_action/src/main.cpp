@@ -208,6 +208,8 @@
 //     return app.run();
 // }
 
+#include "sample_2d_world_builder.hpp"
+
 #include <rain/app/application.hpp>
 #include <rain/app/layer.hpp>
 #include <rain/platform/input_action.hpp>
@@ -215,7 +217,6 @@
 #include <rain/render/camera_2d.hpp>
 #include <rain/render/render_clear_color.hpp>
 #include <rain/render/render_system_2d.hpp>
-#include <rain/render/sprite_2d_component.hpp>
 #include <rain/runtime/movement_system_2d.hpp>
 #include <rain/runtime/transform_2d_component.hpp>
 #include <rain/runtime/velocity_2d_component.hpp>
@@ -249,6 +250,11 @@ static void sample_bounce_system(rain::system_context& context, void* user_data)
     for (rain::usize i = 0; i < velocity_pool->size(); ++i)
     {
         const rain::entity_id entity = entities[i];
+
+        if (!target_world.is_entity_active(entity))
+        {
+            continue;
+        }
 
         if (!transform_pool->has(entity))
         {
@@ -317,73 +323,7 @@ public:
             .user_data = nullptr
         });
 
-        moving_entity_ = create_rect(
-            *context.target_world,
-            rain::string_id{"moving_rect"},
-            0.0f,
-            80.0f,
-            120.0f,
-            120.0f,
-            rain::sprite_color{
-                .r = 0.20f,
-                .g = 0.75f,
-                .b = 1.00f,
-                .a = 1.00f
-            }
-        );
-
-        context.target_world->add_component<rain::velocity_2d_component>(
-            moving_entity_,
-            rain::velocity_2d_component{
-                .x = 180.0f,
-                .y = 0.0f
-            }
-        );
-
-        create_rect(
-            *context.target_world,
-            rain::string_id{"left_rect"},
-            -260.0f,
-            -120.0f,
-            100.0f,
-            100.0f,
-            rain::sprite_color{
-                .r = 1.00f,
-                .g = 0.45f,
-                .b = 0.25f,
-                .a = 1.00f
-            }
-        );
-
-        create_rect(
-            *context.target_world,
-            rain::string_id{"right_rect"},
-            240.0f,
-            -80.0f,
-            180.0f,
-            90.0f,
-            rain::sprite_color{
-                .r = 0.35f,
-                .g = 1.00f,
-                .b = 0.45f,
-                .a = 1.00f
-            }
-        );
-
-        create_rect(
-            *context.target_world,
-            rain::string_id{"center_rect"},
-            0.0f,
-            0.0f,
-            40.0f,
-            40.0f,
-            rain::sprite_color{
-                .r = 1.00f,
-                .g = 1.00f,
-                .b = 1.00f,
-                .a = 1.00f
-            }
-        );
+        world_handles_ = sample_2d::build_sample_2d_world(*context.target_world);
     }
 
     void on_update(rain::application_context& context) override
@@ -391,6 +331,12 @@ public:
         if (context.input->is_pressed(action_quit_))
         {
             context.main_window->request_close();
+            return;
+        }
+
+        if (context.input->is_pressed(action_toggle_frozen_))
+        {
+            toggle_moving_entity_frozen(*context.target_world);
             return;
         }
 
@@ -407,6 +353,17 @@ public:
         render_system_->render(*context.target_world, camera_);
     }
 
+    void toggle_moving_entity_frozen(rain::world& target_world) {
+        const rain::tag_id frozen_tag{"state.frozen"};
+
+        if (target_world.has_tag(world_handles_.moving_rect, frozen_tag)) {
+            target_world.remove_tag(world_handles_.moving_rect, frozen_tag);
+        }
+        else {
+            target_world.add_tag(world_handles_.moving_rect, frozen_tag);
+        }
+    }
+
 private:
     void bind_input_actions(rain::input_action_map& input)
     {
@@ -417,50 +374,8 @@ private:
         input.bind_axis(action_camera_move_y_, rain::key_code::w, 1.0f);
 
         input.bind_button(action_quit_, rain::key_code::escape);
-    }
 
-    static rain::entity_id create_rect(
-        rain::world& target_world,
-        rain::string_id name,
-        rain::f32 x,
-        rain::f32 y,
-        rain::f32 width,
-        rain::f32 height,
-        const rain::sprite_color& color)
-    {
-        rain::entity_id entity = target_world.create_entity(rain::world_entity_desc{
-            .name = name,
-            .active = true
-        });
-
-        target_world.add_component<rain::transform_2d_component>(
-            entity,
-            rain::transform_2d_component{
-                .position = rain::vec2{
-                    .x = x,
-                    .y = y
-                },
-                .rotation = 0.0f,
-                .scale = rain::vec2{
-                    .x = 1.0f,
-                    .y = 1.0f
-                }
-            }
-        );
-
-        target_world.add_component<rain::sprite_2d_component>(
-            entity,
-            rain::sprite_2d_component{
-                .size = rain::vec2{
-                    .x = width,
-                    .y = height
-                },
-                .color = color,
-                .visible = true
-            }
-        );
-
-        return entity;
+        input.bind_button(action_toggle_frozen_, rain::key_code::space);
     }
 
     void update_camera(rain::application_context& context)
@@ -485,17 +400,18 @@ private:
     rain::string_id action_camera_move_x_{"camera.move_x"};
     rain::string_id action_camera_move_y_{"camera.move_y"};
     rain::string_id action_quit_{"app.quit"};
+    rain::string_id action_toggle_frozen_{"state.frozen"};
 
     std::unique_ptr<rain::render_system_2d> render_system_;
 
     rain::camera_2d camera_;
-    rain::entity_id moving_entity_;
+    sample_2d::sample_2d_world_handles world_handles_;
 };
 
 int main()
 {
     rain::application app({
-        .title = "Rain Engine 0.1 - Input Action",
+        .title = "Rain Engine 0.1 - World Builder V0",
         .width = 1280,
         .height = 720,
         .resizable = true,

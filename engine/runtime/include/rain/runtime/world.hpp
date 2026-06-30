@@ -4,6 +4,10 @@
 #include <rain/runtime/component_registry.hpp>
 #include <rain/runtime/entity.hpp>
 #include<rain/core/string_id.hpp>
+#include<rain/core/tag/tag.hpp>
+#include<rain/core/tag/tag_container.hpp>
+#include<rain/core/tag/tag_query.hpp>
+
 
 #include <utility>
 #include <vector>
@@ -43,6 +47,16 @@ namespace rain
         [[nodiscard]] entity_id find_entity_by_name(string_id name)const;
 
         [[nodiscard]] u32 living_entity_count() const;
+
+        void add_tag(entity_id entity, tag_id tag);
+        bool remove_tag(entity_id entity, tag_id tag);
+
+        [[nodiscard]] bool has_tag(entity_id entity, tag_id tag)const;
+        [[nodiscard]] u32 tag_count(entity_id entity, tag_id tag)const;
+        [[nodiscard]] bool matches_tags(entity_id entity, const tag_query& query)const;
+
+        [[nodiscard]] tag_container* try_get_tags(entity_id entity);
+        [[nodiscard]] const tag_container* try_get_tags(entity_id entity)const;
 
         template <typename component_type, typename... args_type>
         component_type& add_component(entity_id entity, args_type&&... args)

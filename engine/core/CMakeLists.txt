@@ -29,6 +29,11 @@ target_sources(rain_core
         include/rain/core/event/event_system.hpp
         include/rain/core/event/event_debug_dump.hpp
         include/rain/core/event/event_graph_export.hpp
+
+        include/rain/core/tag/tag.hpp
+        include/rain/core/tag/tag_container.hpp
+        include/rain/core/tag/tag_event.hpp
+        include/rain/core/tag/tag_query.hpp
 )
 
 target_include_directories(rain_core

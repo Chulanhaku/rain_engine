@@ -3,6 +3,8 @@ add_executable(sample_2d_action)
 target_sources(sample_2d_action
     PRIVATE
         src/main.cpp
+        src/sample_2d_world_builder.cpp
+        src/sample_2d_world_builder.hpp
 )
 
 target_link_libraries(sample_2d_action
