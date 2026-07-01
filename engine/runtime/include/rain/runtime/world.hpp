@@ -7,7 +7,7 @@
 #include<rain/core/tag/tag.hpp>
 #include<rain/core/tag/tag_container.hpp>
 #include<rain/core/tag/tag_query.hpp>
-
+#include<rain/runtime/entity_query.hpp>
 
 #include <utility>
 #include <vector>
@@ -57,6 +57,11 @@ namespace rain
 
         [[nodiscard]] tag_container* try_get_tags(entity_id entity);
         [[nodiscard]] const tag_container* try_get_tags(entity_id entity)const;
+
+        [[nodiscard]] bool has_component(entity_id entity, type_id component_type_id)const;
+        [[nodiscard]] entity_query_result query_entities(const entity_query_desc& desc)const;
+
+
 
         template <typename component_type, typename... args_type>
         component_type& add_component(entity_id entity, args_type&&... args)

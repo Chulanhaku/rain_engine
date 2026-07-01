@@ -1,6 +1,6 @@
 #pragma once
 
-#include <rain/core/container/sparse_set.hpp>
+#include <rain/core/container/rain_sparse_set.hpp>
 #include <rain/core/types.hpp>
 #include <rain/runtime/entity.hpp>
 
@@ -94,6 +94,6 @@ namespace rain
         }
 
     private:
-        sparse_set<entity_id, component_type> components_;
+        rain_sparse_set<entity_id, component_type> components_;
     };
 }

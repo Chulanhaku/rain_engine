@@ -169,7 +169,7 @@ namespace rain{
 
         const tag_component* component = try_get_component<tag_component>(entity);
 
-        if (component == nullptr)return false;
+        if (component == nullptr)return query.matches(tag_container{});
 
         return query.matches(component->tags);
     }
@@ -193,4 +193,69 @@ namespace rain{
 
         return &component->tags;
     }
+
+
+    bool world::has_component(entity_id entity, type_id component_type_id)const {
+        if (!is_alive(entity))return false;
+
+        return components_.has(entity, component_type_id);
+    }
+
+    entity_query_result world::query_entities(const entity_query_desc& desc)const {
+        entity_query_result result;
+
+        const component_pool_base* primary_pool = nullptr;
+
+        if (!desc.required_components.empty()) {
+            primary_pool = components_.try_get_pool(desc.required_components.front());
+            if (primary_pool == nullptr)return result;
+        }
+
+        const auto matches_entity = [&](entity_id entity)->bool {
+            if (desc.require_alive && !is_alive(entity))return false;
+
+            if (desc.require_active && !is_entity_active(entity))return false;
+
+            for (type_id component_type_id : desc.required_components) {
+                if (!has_component(entity, component_type_id))return false;
+            }
+
+            if (!desc.required_tags.all_tags().empty() ||
+                !desc.required_tags.any_tags().empty() ||
+                !desc.required_tags.none_tags().empty()) {
+                if (!matches_tags(entity, desc.required_tags))return false;
+            }
+            return true;
+
+        };
+
+        if (primary_pool != nullptr) {
+            for(usize i =0;i<primary_pool->size();++i){
+                const entity_id entity = primary_pool->entity_at(i);
+
+                if (matches_entity(entity)) {
+                    result.entities.push_back(entity);
+                }
+
+            }
+
+            return result;
+        }
+
+        for (u32 index = 0; index < static_cast<u32>(records_.size()); ++index) {
+            const entity_record& record = records_[index];
+
+            if (!record.alive)continue;
+
+            const entity_id entity{
+                .index = index,
+                .generation = record.generation
+            };
+
+            if (matches_entity(entity))result.entities.push_back(entity);
+        }
+
+        return result;
+    }
 }
+  

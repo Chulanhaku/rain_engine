@@ -91,6 +91,36 @@ namespace rain{
         [[nodiscard]]const std::vector<id_type>& ids() const{
             return dense_ids_;
         }
+        
+        [[nodiscard]] value_type* try_get(id_type id)
+        {
+            if (!contains(id))
+            {
+                return nullptr;
+            }
+
+            return &get(id);
+        }
+
+        [[nodiscard]] const value_type* try_get(id_type id) const
+        {
+            if (!contains(id))
+            {
+                return nullptr;
+            }
+
+            return &get(id);
+        }
+
+        [[nodiscard]] std::vector<id_type>& keys()
+        {
+            return dense_ids_;
+        }
+
+        [[nodiscard]] const std::vector<id_type>& keys() const
+        {
+            return dense_ids_;
+        }
 
         [[nodiscard]]std::vector<value_type>& values() {
             return dense_values_;

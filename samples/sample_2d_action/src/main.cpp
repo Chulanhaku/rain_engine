@@ -227,45 +227,23 @@ static void sample_bounce_system(rain::system_context& context, void* user_data)
 {
     (void)user_data;
 
-    if (context.target_world == nullptr)
+    if (context.target_world == nullptr || context.entity_query == nullptr)
     {
         return;
     }
 
     rain::world& target_world = *context.target_world;
 
-    auto* transform_pool =
-        target_world.try_get_component_pool<rain::transform_2d_component>();
+    const rain::entity_query_result entities =
+        target_world.query_entities(*context.entity_query);
 
-    auto* velocity_pool =
-        target_world.try_get_component_pool<rain::velocity_2d_component>();
-
-    if (transform_pool == nullptr || velocity_pool == nullptr)
+    for (rain::entity_id entity : entities)
     {
-        return;
-    }
-
-    const auto& entities = velocity_pool->entities();
-
-    for (rain::usize i = 0; i < velocity_pool->size(); ++i)
-    {
-        const rain::entity_id entity = entities[i];
-
-        if (!target_world.is_entity_active(entity))
-        {
-            continue;
-        }
-
-        if (!transform_pool->has(entity))
-        {
-            continue;
-        }
-
         rain::transform_2d_component& transform =
-            transform_pool->get(entity);
+            target_world.get_component<rain::transform_2d_component>(entity);
 
         rain::velocity_2d_component& velocity =
-            velocity_pool->get(entity);
+            target_world.get_component<rain::velocity_2d_component>(entity);
 
         constexpr rain::f32 min_x = -300.0f;
         constexpr rain::f32 max_x = 300.0f;
@@ -309,6 +287,22 @@ public:
             .phase_name = "update",
             .priority = 0,
             .enabled = true,
+            .entity_query = rain::entity_query_desc{
+                .required_components = {
+                    rain::get_type_id<rain::transform_2d_component>(),
+                    rain::get_type_id<rain::velocity_2d_component>()
+                },
+                .required_tags = [] {
+                    rain::tag_query query;
+                    query.require_all(rain::tag_id{"object.movable"});
+                    query.reject(rain::tag_id{"state.frozen"});
+                    query.reject(rain::tag_id{"state.stunned"});
+                    query.reject(rain::tag_id{"state.rooted"});
+                    return query;
+                }(),
+                .require_alive = true,
+                .require_active = true
+            },
             .function = &rain::movement_system_2d,
             .user_data = nullptr
         });
@@ -319,6 +313,19 @@ public:
             .phase_name = "update",
             .priority = -10,
             .enabled = true,
+            .entity_query = rain::entity_query_desc{
+                .required_components = {
+                    rain::get_type_id<rain::transform_2d_component>(),
+                    rain::get_type_id<rain::velocity_2d_component>()
+                },
+                .required_tags = [] {
+                    rain::tag_query query;
+                    query.require_all(rain::tag_id{"object.movable"});
+                    return query;
+                }(),
+                .require_alive = true,
+                .require_active = true
+            },
             .function = &sample_bounce_system,
             .user_data = nullptr
         });

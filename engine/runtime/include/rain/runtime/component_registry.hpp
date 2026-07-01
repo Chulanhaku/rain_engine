@@ -13,6 +13,17 @@
 
 namespace rain{
     class component_registry{
+    private:
+        struct component_pools_base{
+            virtual ~component_pools_base()=default;
+            virtual bool remove_entity(entity_id entity)=0;
+            [[nodiscard]] virtual component_pool_base* pool_base_ptr()=0;
+            [[nodiscard]] virtual const component_pool_base* pool_base_ptr()const=0;
+        };
+
+        template <typename component_type>
+        struct component_pools_model;
+
     public:
         template<typename component_type,typename... args_type>
         component_type&add(entity_id entity,args_type&&... args){
@@ -41,6 +52,13 @@ namespace rain{
             if(pool==nullptr)return false;
             
             return pool->has(entity);
+        }
+
+        [[nodiscard]] bool has(entity_id entity,type_id component_type_id)const {
+            const component_pool_base* pool = try_get_pool(component_type_id);
+            if (pool == nullptr)return false;
+
+            return pool->has_entity(entity);
         }
 
         template<typename component_type>
@@ -118,15 +136,26 @@ namespace rain{
                 return nullptr;
             }
 
-            return static_cast<component_pools_model<component_type>*>(pools_[*pools_index].get())->pools_ptr();            
+            return static_cast<const component_pools_model<component_type>*>(pools_[*pools_index].get())->pools_ptr();            
+        }
+
+        [[nodiscard]] component_pool_base* try_get_pool(type_id id) {
+            const usize* pool_index = type_to_pools_index_.find(id);
+
+            if (pool_index == nullptr)return nullptr;
+
+            return pools_[*pool_index]->pool_base_ptr();
+        }
+
+        [[nodiscard]]const component_pool_base* try_get_pool(type_id id)const {
+            const usize* pool_index = type_to_pools_index_.find(id);
+
+            if (pool_index == nullptr)return nullptr;
+
+            return pools_[*pool_index]->pool_base_ptr();
         }
 
     private:
-        struct component_pools_base{
-            virtual ~component_pools_base()=default;
-            virtual bool remove_entity(entity_id entity)=0;
-        };
-
         template <typename component_type>
         struct component_pools_model final:component_pools_base{
             bool remove_entity(entity_id entity)override{
@@ -141,8 +170,17 @@ namespace rain{
                 return &pool;
             }
 
+            [[nodiscard]] component_pool_base* pool_base_ptr()override{
+                return &pool;
+            }
+
+            [[nodiscard]] const component_pool_base* pool_base_ptr()const override{
+                return &pool;
+            }
+
             component_pool<component_type>pool;
         };
+
     private:
         rain_hash_map<type_id,usize>type_to_pools_index_;
         std::vector<std::unique_ptr<component_pools_base>>pools_;

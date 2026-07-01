@@ -12,6 +12,7 @@ namespace rain{
     struct system_context{
         world* target_world = nullptr;
         event_system* events = nullptr;
+        const entity_query_desc* entity_query = nullptr;
         f32 delta_seconds = 0.0f;
         u64 frame_index=0;
     };
@@ -28,6 +29,8 @@ namespace rain{
             i32 priority = 0;
             bool enabled = true;
 
+            entity_query_desc entity_query;
+
             system_function function = nullptr;
             void* user_data = nullptr;
         };
@@ -42,16 +45,17 @@ namespace rain{
 
             events.begin_frame(frame_index);
 
-            system_context context{
-                .target_world = &target_world,
-                .events = &events,
-                .delta_seconds = delta_seconds,
-                .frame_index = frame_index
-            };
-
             for(const u32 system_index: sorted_system_indices_){
                 system_desc& system = systems_[system_index];
                 if(!system.enabled||system.function==nullptr)continue;
+
+                system_context context{
+                    .target_world = &target_world,
+                    .events = &events,
+                    .entity_query = &system.entity_query,
+                    .delta_seconds = delta_seconds,
+                    .frame_index = frame_index
+                };
 
                 system.function(context,system.user_data);
             }
@@ -70,7 +74,6 @@ namespace rain{
             return systems_.size();
         }
 
-
         [[nodiscard]]const std::vector<system_desc>& systems()const{
             return systems_;
         }
@@ -85,7 +88,6 @@ namespace rain{
             for(usize i =0;i<systems_.size();i++){
                 sorted_system_indices_.push_back(static_cast<u32>(i));
             }
-
 
             std::sort(sorted_system_indices_.begin(),sorted_system_indices_.end(),[this](u32 lhs_index,u32 rhs_index){
                 const system_desc& lhs = systems_[lhs_index];
