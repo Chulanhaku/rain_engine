@@ -14,10 +14,17 @@ namespace rain {
 
 		void render(world& target_world, const camera_2d & camera);
 
-		[[nodiscard]] u32 last_quad_count()const;
+		void set_entity_query(const entity_query_desc& desc);
 
+		[[nodiscard]] const entity_query_desc& entity_query()const;
+
+		[[nodiscard]] u32 last_quad_count()const;
+	private:
+		[[nodiscard]] static entity_query_desc make_default_entity_query();
 	private:
 		sprite_renderer_2d sprite_renderer_;
+		
+		entity_query_desc entity_query_;
 		u32 last_quad_count_ = 0;
 	};
 }

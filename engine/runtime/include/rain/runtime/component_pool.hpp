@@ -83,7 +83,7 @@ namespace rain
             return components_.keys()[index];
         }
 
-        [[nodiscard]] const auto& entities() const
+        [[nodiscard]] auto& entities() const
         {
             return components_.keys();
         }

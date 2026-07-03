@@ -1,5 +1,6 @@
 // #include <rain/app/application.hpp>
 // #include <rain/app/layer.hpp>
+#include <rain/core/log.hpp>
 // #include <rain/core/event/event_debug_dump.hpp>
 // #include <rain/core/log.hpp>
 // #include <rain/platform/key_code.hpp>
@@ -8,7 +9,8 @@
 // #include<rain/render/d3d11/d3d11_render_backend.hpp>
 
 // #include <cstdio>
-// #include <memory>
+// #include <cstdio>
+#include <memory>
 
 // struct entity_moved_event
 // {
@@ -212,6 +214,7 @@
 
 #include <rain/app/application.hpp>
 #include <rain/app/layer.hpp>
+#include <rain/core/log.hpp>
 #include <rain/platform/input_action.hpp>
 #include <rain/platform/key_code.hpp>
 #include <rain/render/camera_2d.hpp>
@@ -221,6 +224,7 @@
 #include <rain/runtime/transform_2d_component.hpp>
 #include <rain/runtime/velocity_2d_component.hpp>
 
+#include <cstdio>
 #include <memory>
 
 static void sample_bounce_system(rain::system_context& context, void* user_data)
@@ -284,7 +288,7 @@ public:
         context.scheduler->add_system({
             .system_name = "system.movement_2d",
             .owner_name = "runtime",
-            .phase_name = "update",
+            .phase = rain::system_phase::movement,
             .priority = 0,
             .enabled = true,
             .entity_query = rain::entity_query_desc{
@@ -310,7 +314,7 @@ public:
         context.scheduler->add_system({
             .system_name = "sample.bounce",
             .owner_name = "sample_2d_action",
-            .phase_name = "update",
+            .phase = rain::system_phase::movement,
             .priority = -10,
             .enabled = true,
             .entity_query = rain::entity_query_desc{
@@ -329,6 +333,25 @@ public:
             .function = &sample_bounce_system,
             .user_data = nullptr
         });
+        
+        for (const rain::system_debug_info& info : context.scheduler->debug_infos())
+        {
+            char message[256]{};
+            std::snprintf(
+                message,
+                sizeof(message),
+                "system registered: phase=%s priority=%d name=%s owner=%s components=%zu all_tags=%zu any_tags=%zu none_tags=%zu",
+                rain::to_string(info.phase),
+                info.priority,
+                info.system_name.c_str(),
+                info.owner_name.c_str(),
+                info.required_component_count,
+                info.required_all_tag_count,
+                info.required_any_tag_count,
+                info.rejected_tag_count
+            );
+            rain::log_info(message);
+        }
 
         world_handles_ = sample_2d::build_sample_2d_world(*context.target_world);
     }

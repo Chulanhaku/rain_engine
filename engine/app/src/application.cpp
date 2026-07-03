@@ -60,7 +60,7 @@ namespace rain {
 				current_layer->on_update(context);
 			}
 
-			scheduler_.run(target_world_, events_, delta_seconds, frame_index_);
+			scheduler_.run_all(target_world_, events_, delta_seconds, frame_index_);
 
 			events_.dispatch_all_queued();
 
