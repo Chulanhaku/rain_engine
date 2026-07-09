@@ -220,9 +220,12 @@
 #include <rain/render/camera_2d.hpp>
 #include <rain/render/render_clear_color.hpp>
 #include <rain/render/render_system_2d.hpp>
+#include <rain/render/sprite_2d_component.hpp>
 #include <rain/runtime/movement_system_2d.hpp>
 #include <rain/runtime/transform_2d_component.hpp>
 #include <rain/runtime/velocity_2d_component.hpp>
+#include <rain/asset/image_loader.hpp>
+#include <rain/render/render_resource_desc.hpp>
 
 #include <cstdio>
 #include <memory>
@@ -354,6 +357,50 @@ public:
         }
 
         world_handles_ = sample_2d::build_sample_2d_world(*context.target_world);
+        load_test_texture(context);
+    }
+
+    void load_test_texture(rain::application_context& context)
+    {
+        rain::sprite_2d_component* sprite =
+            context.target_world->try_get_component<rain::sprite_2d_component>(
+                world_handles_.green_rect
+            );
+
+        if (sprite == nullptr)
+        {
+            return;
+        }
+
+        const rain::sprite_color fallback_color = sprite->color;
+        const rain::image_data image =
+            rain::load_image_rgba8("assets/textures/test.jpg");
+
+        if (!image.is_valid())
+        {
+            sprite->texture = {};
+            sprite->color = fallback_color;
+            return;
+        }
+
+        test_texture_ = context.renderer->create_texture_2d(rain::texture_2d_desc{
+            .name = image.source_path,
+            .width = image.width,
+            .height = image.height,
+            .format = rain::texture_format::rgba8_unorm,
+            .pixels = image.pixels.data(),
+            .size_bytes = image.size_bytes()
+        });
+
+        if (!test_texture_.is_valid())
+        {
+            sprite->texture = {};
+            sprite->color = fallback_color;
+            return;
+        }
+
+        sprite->texture = test_texture_;
+        sprite->color = fallback_color;
     }
 
     void on_update(rain::application_context& context) override
@@ -367,6 +414,12 @@ public:
         if (context.input->is_pressed(action_toggle_frozen_))
         {
             toggle_moving_entity_frozen(*context.target_world);
+            return;
+        }
+
+        if (context.input->is_pressed(action_toggle_hidden_))
+        {
+            toggle_green_rect_hidden(*context.target_world);
             return;
         }
 
@@ -394,6 +447,17 @@ public:
         }
     }
 
+    void toggle_green_rect_hidden(rain::world&target_world) {
+        const rain::tag_id hidden_tag{ "render.hidden" };
+
+        if (target_world.has_tag(world_handles_.green_rect, hidden_tag)) {
+            target_world.remove_tag(world_handles_.green_rect, hidden_tag);
+        }
+        else {
+            target_world.add_tag(world_handles_.green_rect, hidden_tag);
+        }
+    }
+
 private:
     void bind_input_actions(rain::input_action_map& input)
     {
@@ -406,6 +470,7 @@ private:
         input.bind_button(action_quit_, rain::key_code::escape);
 
         input.bind_button(action_toggle_frozen_, rain::key_code::space);
+        input.bind_button(action_toggle_hidden_, rain::key_code::h);
     }
 
     void update_camera(rain::application_context& context)
@@ -431,11 +496,13 @@ private:
     rain::string_id action_camera_move_y_{"camera.move_y"};
     rain::string_id action_quit_{"app.quit"};
     rain::string_id action_toggle_frozen_{"state.frozen"};
+    rain::string_id action_toggle_hidden_{ "state.hidden" };
 
     std::unique_ptr<rain::render_system_2d> render_system_;
 
     rain::camera_2d camera_;
     sample_2d::sample_2d_world_handles world_handles_;
+    rain::texture_2d_handle test_texture_;
 };
 
 int main()

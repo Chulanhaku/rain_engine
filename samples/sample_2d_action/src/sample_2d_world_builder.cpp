@@ -22,7 +22,7 @@ namespace sample_2d{
 				.name = name,
 				.active = true
 			});
-
+			target_world.add_tag(entity, rain::tag_id{ "object.renderable" });
 			target_world.add_component<rain::transform_2d_component>(entity, rain::transform_2d_component{
 					.position = rain::vec2{.x = x, .y = y},
 					.rotation = 0.0f,
@@ -33,6 +33,8 @@ namespace sample_2d{
 			target_world.add_component < rain::sprite_2d_component > (entity, rain::sprite_2d_component{
 					.size = rain::vec2{.x = width,.y = height},
 					.color = color,
+					.texture = {},
+					.uv = {},
 					.visible = true
 				}
 			);
@@ -49,7 +51,7 @@ namespace sample_2d{
 
 		handles.moving_rect = create_rect(
 			target_world,
-			rain::string_id{"entity.moving_rect"},
+			rain::string_id{ "entity.moving_rect" },
 			0.0f,
 			80.0f,
 			120.0f,
@@ -72,6 +74,7 @@ namespace sample_2d{
 
 		target_world.add_tag(handles.moving_rect, rain::tag_id{ "object.movable" });
 		target_world.add_tag(handles.moving_rect, rain::tag_id{ "movement.mode.dynamic" });
+
 
 		handles.orange_rect = create_rect(
 			target_world,

@@ -12,6 +12,20 @@ namespace rain {
 		pixel_shader_4_0
 	};
 
+	enum class texture_format {
+		rgba8_unorm
+	};
+
+	struct texture_2d_desc {
+		std::string name;
+		u32 width = 0;
+		u32 height = 0;
+
+		texture_format format = texture_format::rgba8_unorm;
+		const void* pixels = nullptr;
+
+		usize size_bytes = 0;
+	};
 
 	struct shader_program_desc {
 		std::string name;

@@ -84,6 +84,16 @@ namespace rain {
 			return D3D11_USAGE_DEFAULT;
 		}
 
+		[[nodiscard]] DXGI_FORMAT to_dxgi_format(texture_format format) {
+			switch (format) {
+			case texture_format::rgba8_unorm:
+					return DXGI_FORMAT_R8G8B8A8_UNORM;
+				
+			}
+
+			return DXGI_FORMAT_UNKNOWN;
+		}
+
 		[[nodiscard]] UINT to_d3d_bind_flags(render_buffer_bind bind)
 		{
 			switch (bind)
@@ -459,6 +469,7 @@ float4 main(pixel_input input):SV_TARGET{
 		create_device();
 		create_swap_chain();
 		create_render_target_view();
+		create_default_sampler();
 		create_debug_triangle_resources();
 		set_viewport();
 
@@ -472,6 +483,7 @@ float4 main(pixel_input input):SV_TARGET{
 		release_com(swap_chain_);
 		release_com(device_context_);
 		release_com(device_);
+		release_com(default_sampler_);
 
 		rain::log_info("d3d11 render destroyed");
 	}
@@ -485,6 +497,11 @@ float4 main(pixel_input input):SV_TARGET{
 			release_com(buffer.buffer);
 		}
 
+		for (d3d11_texture_2d& texture : textures_) {
+			release_com(texture.shader_resource_view);
+			release_com(texture.texture);
+		}
+
 		for (d3d11_shader_program& shader_program : shader_programs_) {
 			release_com(shader_program.pixel_shader);
 			release_com(shader_program.vertex_shader);
@@ -492,11 +509,115 @@ float4 main(pixel_input input):SV_TARGET{
 			release_com(shader_program.vertex_shader_blob);
 		}
 
+
+
 		pipeline_states_.clear();
 		buffers_.clear();
 		shader_programs_.clear();
+		textures_.clear();
 	}
 
+	void d3d11_render_backend::create_default_sampler() {
+		D3D11_SAMPLER_DESC desc{};
+		desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+		desc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+		desc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+		desc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+		desc.MipLODBias = 0.0f;
+		desc.MaxAnisotropy = 1;
+		desc.ComparisonFunc = D3D11_COMPARISON_ALWAYS;
+		desc.BorderColor[0] = 0.0f;
+		desc.BorderColor[1] = 0.0f;
+		desc.BorderColor[2] = 0.0f;
+		desc.BorderColor[3] = 0.0F;
+		desc.MinLOD = 0.0f;
+		desc.MaxLOD = D3D11_FLOAT32_MAX;
+
+		const HRESULT result = device_->CreateSamplerState(&desc, &default_sampler_);
+
+		rain_assert(!failed(result));
+		rain_assert(default_sampler_ != nullptr);
+	}
+
+	texture_2d_handle d3d11_render_backend::create_texture_2d(const texture_2d_desc& desc) {
+		rain_assert(desc.width > 0);
+		rain_assert(desc.height > 0);
+		rain_assert(desc.pixels!=nullptr);
+		rain_assert(desc.size_bytes >= static_cast<usize>(desc.width) * desc.height * 4);
+
+		d3d11_texture_2d texture;
+		texture.name = desc.name;
+		texture.width = desc.width;
+		texture.height = desc.height;
+		texture.format = desc.format;
+
+		D3D11_TEXTURE2D_DESC texture_desc{};
+		texture_desc.Width = static_cast<UINT>(desc.width);
+		texture_desc.Height = static_cast<UINT>(desc.height);
+		texture_desc.MipLevels = 1;
+		texture_desc.ArraySize = 1;
+		texture_desc.Format = to_dxgi_format(desc.format);
+		texture_desc.SampleDesc.Count = 1;
+		texture_desc.SampleDesc.Quality = 0;
+		texture_desc.Usage = D3D11_USAGE_IMMUTABLE;
+		texture_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		texture_desc.CPUAccessFlags = 0;
+		texture_desc.MiscFlags = 0;	
+
+		D3D11_SUBRESOURCE_DATA initial_data{};
+ 	  	initial_data.pSysMem = desc.pixels;
+    	initial_data.SysMemPitch = static_cast<UINT>(desc.width * 4);
+    	initial_data.SysMemSlicePitch = static_cast<UINT>(desc.size_bytes);
+
+		const HRESULT create_texture_result = device_->CreateTexture2D(
+			&texture_desc,
+			&initial_data,
+			&texture.texture
+		);
+
+		rain_assert(!failed(create_texture_result));
+		rain_assert(texture.texture != nullptr);
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc{};
+		srv_desc.Format = texture_desc.Format;
+		srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srv_desc.Texture2D.MostDetailedMip = 0;
+		srv_desc.Texture2D.MipLevels = 1;
+
+		const HRESULT create_srv_result = device_->CreateShaderResourceView(
+			texture.texture,
+			&srv_desc,
+			&texture.shader_resource_view
+		);
+
+		rain_assert(!failed(create_srv_result));
+		rain_assert(texture.shader_resource_view != nullptr);
+		
+		const u32 index = static_cast<u32>(textures_.size());
+		textures_.push_back(texture);
+
+		rain::log_info("D3D11 texture created");
+
+		return texture_2d_handle{ .index = index,.generation = 0 };
+	}
+
+	void d3d11_render_backend::set_texture_2d(texture_2d_handle handle, u32 slot) {
+		if (!handle.is_valid() || handle.index >= textures_.size()) {
+			return;
+		}
+
+		d3d11_texture_2d& texture = textures_[handle.index];
+
+		if (texture.shader_resource_view == nullptr)return;
+
+		ID3D11ShaderResourceView* views[] = { texture.shader_resource_view };
+
+		device_context_->PSSetShaderResources(static_cast<UINT>(slot), 1, views);
+
+		if (default_sampler_ != nullptr) {
+			device_context_->PSSetSamplers(static_cast<UINT>(slot), 1, &default_sampler_);
+		}
+	}
 
 	void d3d11_render_backend::create_device() {
 		UINT create_device_flags = 0;

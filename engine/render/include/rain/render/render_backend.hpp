@@ -21,12 +21,13 @@ namespace rain {
 		[[nodiscard]] virtual render_buffer_handle create_vertex_buffer(const render_buffer_desc& desc) = 0;
 
 		[[nodiscard]] virtual pipeline_state_handle create_pipeline_state(const pipeline_state_desc&desc) = 0;
+		[[nodiscard]] virtual texture_2d_handle create_texture_2d(const texture_2d_desc& desc) = 0;
 
 		virtual void set_pipeline_state(pipeline_state_handle handle) = 0;
 		virtual void set_vertex_buffer(render_buffer_handle handle) = 0;
 		virtual void draw(u32 vertex_count,u32 start_vertex) = 0;
 		virtual void update_buffer(render_buffer_handle handle, const void* data, usize size_bytes) = 0;
-
+		virtual void set_texture_2d(texture_2d_handle handle, u32 slot) = 0;
 
 		[[nodiscard]] virtual u32 width()const = 0;
 		[[nodiscard]] virtual u32 height()const = 0;

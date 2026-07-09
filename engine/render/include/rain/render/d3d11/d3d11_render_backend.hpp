@@ -42,7 +42,9 @@ namespace rain {
 		void update_buffer(render_buffer_handle handle,const void* data,usize size_bytes);
 
 		void draw(u32 vertex_count, u32 start_vertex)override;
+		[[nodiscard]] virtual texture_2d_handle create_texture_2d(const texture_2d_desc& desc);
 
+		void set_texture_2d(texture_2d_handle handle, u32 slot);
 	private:
 		void initialize();
 		void shutdown();
@@ -50,6 +52,7 @@ namespace rain {
 		void create_device();
 		void create_swap_chain();
 		void create_render_target_view();
+		void create_default_sampler();
 		void release_render_resources();
 		void set_viewport();
 	private:
@@ -82,6 +85,17 @@ namespace rain {
 			ID3D11InputLayout* input_layout = nullptr;
 			primitive_topology topology = primitive_topology::triangle_list;
 		};
+
+		struct d3d11_texture_2d {
+			std::string name;
+
+			ID3D11Texture2D* texture = nullptr;
+			ID3D11ShaderResourceView* shader_resource_view = nullptr;
+
+			u32 width = 0;
+			u32 height = 0;
+			texture_format format = texture_format::rgba8_unorm;
+		};
 	private:
 		rain_window* target_window_ = nullptr;
 
@@ -107,6 +121,9 @@ namespace rain {
 		pipeline_state_handle debug_triangle_pipeline_;
 
 		D3D_FEATURE_LEVEL feature_level_ = D3D_FEATURE_LEVEL_11_0;
+
+		std:: vector<d3d11_texture_2d>textures_;
+		ID3D11SamplerState* default_sampler_ = nullptr;
 	};
 
 

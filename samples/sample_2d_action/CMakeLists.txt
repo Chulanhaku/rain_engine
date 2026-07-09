@@ -10,6 +10,7 @@ target_sources(sample_2d_action
 target_link_libraries(sample_2d_action
     PRIVATE
         rain_app
+        rain_asset
 )
 
 target_compile_features(sample_2d_action

@@ -39,16 +39,21 @@ namespace rain {
 
 			const transform_2d_component& transform = target_world.get_component<transform_2d_component>(entity);
 
-			sprite_renderer_.draw_rect_world(sprite_rect_world{
-				.center = vec2{
-					.x = transform.position.x,
-					.y = transform.position.y
-				},
-				.size = vec2{
-					.x = sprite.size.x * transform.scale.x,
-					.y = sprite.size.y * transform.scale.y
-				}
-			}, sprite.color);
+			sprite_renderer_.draw_rect_world(
+				sprite_rect_world{
+					.center = vec2{
+						.x = transform.position.x,
+						.y = transform.position.y
+					},
+					.size = vec2{
+						.x = sprite.size.x * transform.scale.x,
+						.y = sprite.size.y * transform.scale.y
+					}
+				}, 
+				sprite.color,
+				sprite.texture,
+				sprite.uv
+			);
 
 		}
 
@@ -78,7 +83,7 @@ namespace rain {
 			.required_components = {get_type_id<transform_2d_component>(),get_type_id<sprite_2d_component>()},
 			.required_tags = render_query,
 			.require_alive = true,
-			.reuqire_active = true
+			.require_active = true
 		};
 	}
 }
