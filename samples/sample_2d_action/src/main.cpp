@@ -382,7 +382,6 @@ public:
             sprite->color = fallback_color;
             return;
         }
-
         test_texture_ = context.renderer->create_texture_2d(rain::texture_2d_desc{
             .name = image.source_path,
             .width = image.width,
@@ -400,7 +399,12 @@ public:
         }
 
         sprite->texture = test_texture_;
-        sprite->color = fallback_color;
+        sprite->color = rain::sprite_color{
+            .r = 1.0f,
+            .g = 1.0f,
+            .b = 1.0f,
+            .a = 1.0f
+        };
     }
 
     void on_update(rain::application_context& context) override

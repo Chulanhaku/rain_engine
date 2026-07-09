@@ -559,24 +559,27 @@ float4 main(pixel_input input):SV_TARGET{
 		texture_desc.Format = to_dxgi_format(desc.format);
 		texture_desc.SampleDesc.Count = 1;
 		texture_desc.SampleDesc.Quality = 0;
-		texture_desc.Usage = D3D11_USAGE_IMMUTABLE;
+		texture_desc.Usage = D3D11_USAGE_DEFAULT;
 		texture_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 		texture_desc.CPUAccessFlags = 0;
-		texture_desc.MiscFlags = 0;	
-
-		D3D11_SUBRESOURCE_DATA initial_data{};
- 	  	initial_data.pSysMem = desc.pixels;
-    	initial_data.SysMemPitch = static_cast<UINT>(desc.width * 4);
-    	initial_data.SysMemSlicePitch = static_cast<UINT>(desc.size_bytes);
-
+		texture_desc.MiscFlags = 0;
 		const HRESULT create_texture_result = device_->CreateTexture2D(
 			&texture_desc,
-			&initial_data,
+			nullptr,
 			&texture.texture
 		);
 
-		rain_assert(!failed(create_texture_result));
+				rain_assert(!failed(create_texture_result));
 		rain_assert(texture.texture != nullptr);
+
+		device_context_->UpdateSubresource(
+			texture.texture,
+			0,
+			nullptr,
+			desc.pixels,
+			static_cast<UINT>(desc.width * 4),
+			static_cast<UINT>(desc.size_bytes)
+		);
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc{};
 		srv_desc.Format = texture_desc.Format;
@@ -605,7 +608,6 @@ float4 main(pixel_input input):SV_TARGET{
 		if (!handle.is_valid() || handle.index >= textures_.size()) {
 			return;
 		}
-
 		d3d11_texture_2d& texture = textures_[handle.index];
 
 		if (texture.shader_resource_view == nullptr)return;
