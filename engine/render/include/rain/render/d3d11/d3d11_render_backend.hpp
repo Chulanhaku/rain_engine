@@ -55,6 +55,7 @@ namespace rain {
 		void create_default_sampler();
 		void release_render_resources();
 		void set_viewport();
+		void create_blend_state(render_blend_mode belnd_mode,ID3D11BlendState** out_blend_state);
 	private:
 		struct d3d11_shader_program {
 			std::string name;
@@ -82,8 +83,12 @@ namespace rain {
 		struct d3d11_pipeline_state {
 			std::string name;
 			shader_program_handle shader;
+			
 			ID3D11InputLayout* input_layout = nullptr;
+			ID3D11BlendState* blend_state = nullptr;
+
 			primitive_topology topology = primitive_topology::triangle_list;
+			render_blend_mode blend_mode = render_blend_mode::opaque;
 		};
 
 		struct d3d11_texture_2d {

@@ -11,6 +11,7 @@ target_link_libraries(sample_2d_action
     PRIVATE
         rain_app
         rain_asset
+        ws2_32
 )
 
 target_compile_features(sample_2d_action

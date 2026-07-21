@@ -7,6 +7,8 @@
 #include<rain/runtime/world.hpp>
 #include<rain/render/render_backend.hpp>
 #include<rain/platform/input_action.hpp>
+#include<rain/asset/texture_asset_registry.hpp>
+#include<rain/render/material_2d_registry.hpp>
 
 namespace rain {
 	struct application_context {
@@ -15,6 +17,8 @@ namespace rain {
 		event_system* events = nullptr;
 		system_scheduler* scheduler = nullptr;
 		render_backend* renderer = nullptr;
+		texture_asset_registry* assets = nullptr;
+		material_2d_registry* materials = nullptr;
 
 		f32 delta_seconds = 0.0f;
 		u64 frame_index = 0;

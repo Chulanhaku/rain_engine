@@ -47,13 +47,15 @@ namespace rain {
 			const sprite_rect_ndc& rect,
 			const sprite_color& color,
 			texture_2d_handle texture = texture_2d_handle{},
-			const sprite_uv_rect& uv = {}
+			const sprite_uv_rect& uv = {},
+			render_blend_mode blend_mode = render_blend_mode::alpha
 		);
 		void draw_rect_world(
 			const sprite_rect_world& rect,
 			const sprite_color& color,
 			texture_2d_handle texture = texture_2d_handle{},
-			const sprite_uv_rect& uv = {}
+			const sprite_uv_rect& uv = {},
+			render_blend_mode blend_mode = render_blend_mode::alpha
 		);
 
 		void end();
@@ -81,6 +83,7 @@ namespace rain {
 			const sprite_uv_rect& uv
 		);
 
+		[[nodiscard]] pipeline_state_handle pipeline_for_blend(render_blend_mode belnd_mode)const;
 	private:
 		render_backend* backend_ = nullptr;
 		const camera_2d* active_camera_ = nullptr;
@@ -92,9 +95,14 @@ namespace rain {
 
 		shader_program_handle shader_;
 		render_buffer_handle vertex_buffer_;
-		pipeline_state_handle pipeline_;
+		pipeline_state_handle opaque_pipeline_;
+		pipeline_state_handle alpha_pipeline_;
+		pipeline_state_handle additive_pipeline_;
 		texture_2d_handle default_white_texture_;
 		texture_2d_handle current_texture_;
+
+		render_blend_mode current_blend_mode_;
+
 		u32 submitted_quad_count_ = 0;
 	};
 }

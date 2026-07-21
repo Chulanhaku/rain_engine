@@ -12,6 +12,7 @@ namespace rain {
 		,renderer_(create_d3d11_render_backend(main_window_))
 		,clear_color_(desc.clear_color)
 	{
+		assets_ = std::make_unique<texture_asset_registry>(*renderer_);
 		rain::log_info("app start");
 	}
 
@@ -21,7 +22,7 @@ namespace rain {
 		for (auto layer_iter =layers_.rbegin(); layer_iter != layers_.rend(); layer_iter++) {
 			(*layer_iter)->on_detach(context);
 		}
-
+		assets_.reset();
 		renderer_.reset();
 
 		rain::log_info("app down");
@@ -138,6 +139,20 @@ namespace rain {
 		return input_;
 	}
 
+	texture_asset_registry& application::assets() {
+		return *assets_;
+	}
+	const texture_asset_registry& application::assets()const {
+		return *assets_;
+	}
+	material_2d_registry& application::materials() {
+		return materials_;
+	}
+
+	const material_2d_registry& application::materials()const {
+		return materials_;
+	}
+
 	application_context application::make_context(f32 delta_seconds)
     {
 		return application_context{
@@ -146,7 +161,8 @@ namespace rain {
 			.events = &events_,
             .scheduler = &scheduler_,
 			.renderer = renderer_.get(),
-
+			.assets = assets_.get(),
+			.materials = &materials_,
             .delta_seconds = delta_seconds,
             .frame_index = frame_index_,
 			.input = &input_

@@ -210,6 +210,10 @@
 //     return app.run();
 // }
 
+
+// gedaun
+
+
 #include "sample_2d_world_builder.hpp"
 
 #include <rain/app/application.hpp>
@@ -224,8 +228,7 @@
 #include <rain/runtime/movement_system_2d.hpp>
 #include <rain/runtime/transform_2d_component.hpp>
 #include <rain/runtime/velocity_2d_component.hpp>
-#include <rain/asset/image_loader.hpp>
-#include <rain/render/render_resource_desc.hpp>
+#include<rain/asset/texture_asset_registry.hpp>
 
 #include <cstdio>
 #include <memory>
@@ -275,11 +278,6 @@ public:
     void on_attach(rain::application_context& context) override
     {
         bind_input_actions(*context.input);
-
-        render_system_ = std::make_unique<rain::render_system_2d>(
-            *context.renderer,
-            4096
-        );
 
         camera_ = rain::camera_2d(rain::camera_2d_desc{
             .position = rain::vec2{.x = 0.0f, .y = 0.0f},
@@ -356,55 +354,38 @@ public:
             rain::log_info(message);
         }
 
-        world_handles_ = sample_2d::build_sample_2d_world(*context.target_world);
-        load_test_texture(context);
-    }
-
-    void load_test_texture(rain::application_context& context)
-    {
-        rain::sprite_2d_component* sprite =
-            context.target_world->try_get_component<rain::sprite_2d_component>(
-                world_handles_.green_rect
+        const rain::texture_2d_handle test_texture =
+            context.assets->load_texture_2d(
+                "assets/textures/test.jpg"
             );
 
-        if (sprite == nullptr)
-        {
-            return;
-        }
+        const rain::material_2d_handle solid_material =
+            context.materials->create(rain::material_2d_desc{
+                .name = "material.solid_2d",
+                .texture = rain::texture_2d_handle{},
+                .blend_mode = rain::render_blend_mode::opaque
+            });
 
-        const rain::sprite_color fallback_color = sprite->color;
-        const rain::image_data image =
-            rain::load_image_rgba8("assets/textures/test.jpg");
+        const rain::material_2d_handle image_material =
+            context.materials->create(rain::material_2d_desc{
+                .name = "material.test_image",
+                .texture = test_texture,
+                .blend_mode = rain::render_blend_mode::alpha
+            });
 
-        if (!image.is_valid())
-        {
-            sprite->texture = {};
-            sprite->color = fallback_color;
-            return;
-        }
-        test_texture_ = context.renderer->create_texture_2d(rain::texture_2d_desc{
-            .name = image.source_path,
-            .width = image.width,
-            .height = image.height,
-            .format = rain::texture_format::rgba8_unorm,
-            .pixels = image.pixels.data(),
-            .size_bytes = image.size_bytes()
-        });
+        render_system_ = std::make_unique<rain::render_system_2d>(
+            *context.renderer,
+            *context.materials,
+            4096
+        );
 
-        if (!test_texture_.is_valid())
-        {
-            sprite->texture = {};
-            sprite->color = fallback_color;
-            return;
-        }
-
-        sprite->texture = test_texture_;
-        sprite->color = rain::sprite_color{
-            .r = 1.0f,
-            .g = 1.0f,
-            .b = 1.0f,
-            .a = 1.0f
-        };
+        world_handles_ = sample_2d::build_sample_2d_world(
+            *context.target_world,
+            sample_2d::sample_2d_world_materials{
+                .solid_material = solid_material,
+                .image_material = image_material
+            }
+        );
     }
 
     void on_update(rain::application_context& context) override
@@ -506,7 +487,6 @@ private:
 
     rain::camera_2d camera_;
     sample_2d::sample_2d_world_handles world_handles_;
-    rain::texture_2d_handle test_texture_;
 };
 
 int main()
@@ -528,3 +508,521 @@ int main()
 
     return app.run();
 }
+
+//ge1
+
+// #include <iostream>
+// #include <cstring>
+
+// #ifdef _WIN32
+// #include <winsock2.h>
+// #include <ws2tcpip.h>
+// #pragma comment(lib, "ws2_32.lib")
+// using SOCKLEN = int;
+// #else
+// #include <sys/socket.h>
+// #include <arpa/inet.h>
+// #include <unistd.h>
+// using SOCKLEN = socklen_t;
+// #define closesocket close
+// #endif
+
+// // 发包目标配置
+// #define TARGET_IP   "162.14.132.34"  // 改成你的测试服务IP
+// #define TARGET_PORT 40054          // 目标端口
+// #define PACKET_DATA 0x56          // 单字节包内容 D
+// #define SEND_COUNT  100000        // 发送总次数
+
+// int main()
+// {
+// #ifdef _WIN32
+//     // Windows 初始化网络库
+//     WSADATA wsaData;
+//     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+//     {
+//         std::cerr << "WSAStartup failed" << std::endl;
+//         return -1;
+//     }
+// #endif
+
+//     // 1. 创建UDP socket
+//     int sock = socket(AF_INET, SOCK_DGRAM, 0);
+//     if (sock < 0)
+//     {
+//         std::cerr << "Create socket failed" << std::endl;
+// #ifdef _WIN32
+//         WSACleanup();
+// #endif
+//         return -1;
+//     }
+
+//     // 2. 填充目标地址
+//     sockaddr_in targetAddr{};
+//     targetAddr.sin_family = AF_INET;
+//     targetAddr.sin_port = htons(TARGET_PORT);
+//     inet_pton(AF_INET, TARGET_IP, &targetAddr.sin_addr);
+
+//     // 数据包：仅1字节 0x44
+//     char buf = PACKET_DATA;
+//     SOCKLEN addrLen = sizeof(targetAddr);
+
+//     std::cout << "Start send UDP 0x44 packet, total: " << SEND_COUNT << std::endl;
+//     while(1){
+//         // 3. 循环 sendto 发包
+//         for (int i = 0; i < SEND_COUNT; ++i)
+//         {
+//             ssize_t ret = sendto(
+//                 sock,
+//                 &buf,
+//                 1,
+//                 0,
+//                 (sockaddr*)&targetAddr,
+//                 addrLen
+//             );
+
+//             if (ret < 0)
+//             {
+//                 std::cerr << "Send fail at idx: " << i << std::endl;
+//                 break;
+//             }
+
+//             if (i % 10000 == 0)
+//             {
+//                 std::cout << "Sent " << i << " packets..." << std::endl;
+//             }
+//         }
+//     }
+//     std::cout << "Send task finished" << std::endl;
+
+//     // 释放资源
+//     closesocket(sock);
+// #ifdef _WIN32
+//     WSACleanup();
+// #endif
+//     return 0;
+// }
+
+
+//ge2
+
+// #include <algorithm>
+// #include <chrono>
+// #include <cstddef>
+// #include <cstdint>
+// #include <exception>
+// #include <iostream>
+// #include <string>
+// #include <thread>
+// #include <vector>
+
+// #include <winsock2.h>
+// #include <ws2tcpip.h>
+// #include <windows.h>
+
+// namespace
+// {
+//     constexpr std::uint32_t max_packets_per_second = 500000;
+//     constexpr std::size_t min_packet_size = 1;
+//     constexpr std::size_t max_packet_size = 1400;
+
+//     bool is_escape_pressed()
+//     {
+//         return (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+//     }
+
+//     bool is_private_or_loopback_ipv4(const in_addr& address)
+//     {
+//         const std::uint32_t host_address = ntohl(address.s_addr);
+
+//         const std::uint8_t first_octet =
+//             static_cast<std::uint8_t>((host_address >> 24) & 0xff);
+
+//         const std::uint8_t second_octet =
+//             static_cast<std::uint8_t>((host_address >> 16) & 0xff);
+
+//         // 127.0.0.0/8
+//         if (first_octet == 127)
+//         {
+//             return true;
+//         }
+
+//         // 10.0.0.0/8
+//         if (first_octet == 10)
+//         {
+//             return true;
+//         }
+
+//         // 172.16.0.0/12
+//         if (first_octet == 172 &&
+//             second_octet >= 16 &&
+//             second_octet <= 31)
+//         {
+//             return true;
+//         }
+
+//         // 192.168.0.0/16
+//         if (first_octet == 192 &&
+//             second_octet == 168)
+//         {
+//             return true;
+//         }
+
+//         return false;
+//     }
+
+//     void print_usage()
+//     {
+//         std::cout
+//             << "usage:\n"
+//             << "  udp_sender.exe <ip> <port> <pps> <packet_size>\n\n"
+//             << "example:\n"
+//             << "  udp_sender.exe 127.0.0.1 9000 100 1200\n\n"
+//             << "parameters:\n"
+//             << "  ip          target IPv4 address\n"
+//             << "  port        target UDP port\n"
+//             << "  pps         packets per second, 1 - "
+//             << max_packets_per_second
+//             << "\n"
+//             << "  packet_size UDP payload size, "
+//             << min_packet_size
+//             << " - "
+//             << max_packet_size
+//             << " bytes\n";
+//     }
+// }
+
+// int main(int argc, char* argv[])
+// {
+//     if (argc != 5)
+//     {
+//         print_usage();
+//         return 1;
+//     }
+
+//     const std::string target_ip = argv[1];
+
+//     int target_port = 0;
+//     std::uint32_t packets_per_second = 0;
+//     std::size_t packet_size = 0;
+
+//     try
+//     {
+//         target_port = std::stoi(argv[2]);
+
+//         packets_per_second =
+//             static_cast<std::uint32_t>(
+//                 std::stoul(argv[3]));
+
+//         packet_size =
+//             static_cast<std::size_t>(
+//                 std::stoull(argv[4]));
+//     }
+//     catch (const std::exception&)
+//     {
+//         std::cerr
+//             << "invalid port, pps or packet_size\n";
+
+//         return 1;
+//     }
+
+//     if (target_port <= 0 ||
+//         target_port > 65535)
+//     {
+//         std::cerr
+//             << "port must be between 1 and 65535\n";
+
+//         return 1;
+//     }
+
+//     if (packets_per_second == 0 ||
+//         packets_per_second > max_packets_per_second)
+//     {
+//         std::cerr
+//             << "pps must be between 1 and "
+//             << max_packets_per_second
+//             << '\n';
+
+//         return 1;
+//     }
+
+//     if (packet_size < min_packet_size ||
+//         packet_size > max_packet_size)
+//     {
+//         std::cerr
+//             << "packet_size must be between "
+//             << min_packet_size
+//             << " and "
+//             << max_packet_size
+//             << " bytes\n";
+
+//         return 1;
+//     }
+
+//     WSADATA winsock_data{};
+
+//     const int startup_result =
+//         WSAStartup(
+//             MAKEWORD(2, 2),
+//             &winsock_data);
+
+//     if (startup_result != 0)
+//     {
+//         std::cerr
+//             << "WSAStartup failed: "
+//             << startup_result
+//             << '\n';
+
+//         return 1;
+//     }
+
+//     const SOCKET socket_handle =
+//         socket(
+//             AF_INET,
+//             SOCK_DGRAM,
+//             IPPROTO_UDP);
+
+//     if (socket_handle == INVALID_SOCKET)
+//     {
+//         std::cerr
+//             << "socket failed: "
+//             << WSAGetLastError()
+//             << '\n';
+
+//         WSACleanup();
+//         return 1;
+//     }
+
+//     sockaddr_in target_address{};
+//     target_address.sin_family = AF_INET;
+//     target_address.sin_port =
+//         htons(
+//             static_cast<unsigned short>(
+//                 target_port));
+
+//     const int address_result =
+//         inet_pton(
+//             AF_INET,
+//             target_ip.c_str(),
+//             &target_address.sin_addr);
+
+//     if (address_result != 1)
+//     {
+//         std::cerr
+//             << "invalid IPv4 address\n";
+
+//         closesocket(socket_handle);
+//         WSACleanup();
+
+//         return 1;
+//     }
+
+//     if (!is_private_or_loopback_ipv4(
+//             target_address.sin_addr))
+//     {
+//         std::cerr
+//             << "only loopback or private IPv4 "
+//             << "addresses are allowed\n"
+//             << "allowed ranges:\n"
+//             << "  127.0.0.0/8\n"
+//             << "  10.0.0.0/8\n"
+//             << "  172.16.0.0/12\n"
+//             << "  192.168.0.0/16\n";
+
+//         closesocket(socket_handle);
+//         WSACleanup();
+
+//         return 1;
+//     }
+
+//     std::vector<char> packet_data(packet_size);
+
+//     for (std::size_t byte_index = 0;
+//          byte_index < packet_data.size();
+//          ++byte_index)
+//     {
+//         packet_data[byte_index] =
+//             static_cast<char>(
+//                 byte_index & 0xff);
+//     }
+
+//     // 前 8 字节写入一个简单标识，方便服务端识别测试包。
+//     constexpr char packet_magic[] =
+//         {'R', 'A', 'I', 'N', 'U', 'D', 'P', '1'};
+
+//     const std::size_t magic_size =
+//         std::min(
+//             packet_data.size(),
+//             sizeof(packet_magic));
+
+//     std::copy_n(
+//         packet_magic,
+//         magic_size,
+//         packet_data.begin());
+
+//     using clock_type =
+//         std::chrono::steady_clock;
+
+//     const auto packet_interval =
+//         std::chrono::duration<double>(
+//             1.0 /
+//             static_cast<double>(
+//                 packets_per_second));
+
+//     auto next_send_time =
+//         clock_type::now();
+
+//     auto statistics_start_time =
+//         clock_type::now();
+
+//     std::uint64_t total_packet_count = 0;
+//     std::uint64_t total_byte_count = 0;
+
+//     std::uint64_t current_packet_count = 0;
+//     std::uint64_t current_byte_count = 0;
+
+//     std::cout
+//         << "UDP sender started\n"
+//         << "target: "
+//         << target_ip
+//         << ':'
+//         << target_port
+//         << '\n'
+//         << "target pps: "
+//         << packets_per_second
+//         << '\n'
+//         << "payload size: "
+//         << packet_size
+//         << " bytes\n"
+//         << "estimated payload bandwidth: "
+//         << (
+//             static_cast<double>(
+//                 packets_per_second) *
+//             static_cast<double>(
+//                 packet_size) *
+//             8.0 /
+//             1000000.0)
+//         << " Mbit/s\n"
+//         << "press ESC to stop\n\n";
+
+//     while (!is_escape_pressed())
+//     {
+//         const int sent_bytes =
+//             sendto(
+//                 socket_handle,
+//                 packet_data.data(),
+//                 static_cast<int>(
+//                     packet_data.size()),
+//                 0,
+//                 reinterpret_cast<
+//                     const sockaddr*>(
+//                     &target_address),
+//                 sizeof(target_address));
+
+//         if (sent_bytes == SOCKET_ERROR)
+//         {
+//             std::cerr
+//                 << "\nsendto failed: "
+//                 << WSAGetLastError()
+//                 << '\n';
+
+//             break;
+//         }
+
+//         ++total_packet_count;
+//         ++current_packet_count;
+
+//         total_byte_count +=
+//             static_cast<std::uint64_t>(
+//                 sent_bytes);
+
+//         current_byte_count +=
+//             static_cast<std::uint64_t>(
+//                 sent_bytes);
+
+//         const auto current_time =
+//             clock_type::now();
+
+//         const auto statistics_duration =
+//             current_time -
+//             statistics_start_time;
+
+//         if (statistics_duration >=
+//             std::chrono::seconds(1))
+//         {
+//             const double elapsed_seconds =
+//                 std::chrono::duration<double>(
+//                     statistics_duration)
+//                     .count();
+
+//             const double actual_pps =
+//                 static_cast<double>(
+//                     current_packet_count) /
+//                 elapsed_seconds;
+
+//             const double payload_mbps =
+//                 static_cast<double>(
+//                     current_byte_count) *
+//                 8.0 /
+//                 elapsed_seconds /
+//                 1000000.0;
+
+//             std::cout
+//                 << "\ractual pps: "
+//                 << static_cast<std::uint64_t>(
+//                     actual_pps)
+//                 << " | payload: "
+//                 << payload_mbps
+//                 << " Mbit/s"
+//                 << " | total packets: "
+//                 << total_packet_count
+//                 << "          "
+//                 << std::flush;
+
+//             current_packet_count = 0;
+//             current_byte_count = 0;
+//             statistics_start_time =
+//                 current_time;
+//         }
+
+//         next_send_time +=
+//             std::chrono::duration_cast<
+//                 clock_type::duration>(
+//                 packet_interval);
+
+//         std::this_thread::sleep_until(
+//             next_send_time);
+
+//         const auto after_sleep_time =
+//             clock_type::now();
+
+//         // 程序卡顿后不补发之前积压的数据包。
+//         if (next_send_time <
+//             after_sleep_time -
+//                 std::chrono::seconds(1))
+//         {
+//             next_send_time =
+//                 after_sleep_time;
+//         }
+//     }
+
+//     std::cout
+//         << "\n\nUDP sender stopped\n"
+//         << "total packets: "
+//         << total_packet_count
+//         << '\n'
+//         << "total payload bytes: "
+//         << total_byte_count
+//         << '\n'
+//         << "total payload MiB: "
+//         << (
+//             static_cast<double>(
+//                 total_byte_count) /
+//             1024.0 /
+//             1024.0)
+//         << '\n';
+
+//     closesocket(socket_handle);
+//     WSACleanup();
+
+//     return 0;
+// }

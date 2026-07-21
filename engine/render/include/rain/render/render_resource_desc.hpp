@@ -2,6 +2,7 @@
 
 #include<rain/core/types.hpp>
 #include<rain/render/render_handles.hpp>
+#include<rain/render/material_2d.hpp>
 
 #include<string>
 #include<vector>
@@ -86,6 +87,6 @@ namespace rain {
 		std::vector<vertex_attribute_desc> vertex_attributes;
 
 		primitive_topology topology = primitive_topology::triangle_list;
-
+		render_blend_mode blend_mode = render_blend_mode::opaque;
 	};
 }

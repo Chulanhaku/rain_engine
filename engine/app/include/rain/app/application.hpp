@@ -9,6 +9,7 @@
 #include<rain/render/render_backend.hpp>
 #include<rain/render/render_clear_color.hpp>
 #include<rain/render/d3d11/d3d11_render_backend.hpp>
+#include<rain/asset/texture_asset_registry.hpp>
 
 #include<memory>
 #include<string>
@@ -57,6 +58,13 @@ namespace rain {
 		[[nodiscard]] input_action_map& input();
 		[[nodiscard]] const input_action_map& input()const;
 
+		[[nodiscard]] texture_asset_registry& assets();
+		[[nodiscard]] const texture_asset_registry& assets()const;
+
+		[[nodiscard]] material_2d_registry& materials();
+		[[nodiscard]] const material_2d_registry& materials()const;
+
+
 	private:
 		[[nodiscard]] application_context make_context(f32 delta_seconds);
 
@@ -71,6 +79,10 @@ namespace rain {
 		u64 frame_index_ = 0;
 
 		std::unique_ptr<render_backend>renderer_;
+		
+		material_2d_registry materials_;
+		std::unique_ptr<texture_asset_registry>assets_;
+
 		render_clear_color  clear_color_{};
 
 		input_action_map input_;

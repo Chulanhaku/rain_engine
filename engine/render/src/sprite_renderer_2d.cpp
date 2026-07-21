@@ -84,16 +84,19 @@ float4 main(pixel_input input) : SV_TARGET
         const sprite_rect_ndc& rect,
         const sprite_color& color,
         texture_2d_handle texture,
-        const sprite_uv_rect& uv)
+        const sprite_uv_rect& uv,
+        render_blend_mode blend_mode)
     {
         texture = resolve_texture(texture);
 
-        if (texture != current_texture_ && !vertices_.empty())
-        {
-            flush();
-        }
+        const bool texture_changed = texture != current_texture_;
+
+        const bool blend_mode_changed = blend_mode != current_blend_mode_;
+
+        if ((texture_changed || blend_mode_changed) && !vertices_.empty())flush();
 
         current_texture_ = texture;
+        current_blend_mode_ = blend_mode;
 
         const f32 left = rect.x;
         const f32 right = rect.x + rect.width;
@@ -114,18 +117,21 @@ float4 main(pixel_input input) : SV_TARGET
         const sprite_rect_world& rect,
         const sprite_color& color,
         texture_2d_handle texture,
-        const sprite_uv_rect& uv)
+        const sprite_uv_rect& uv,
+        render_blend_mode blend_mode)
     {
         rain_assert(active_camera_ != nullptr);
 
         texture = resolve_texture(texture);
 
-        if (texture != current_texture_ && !vertices_.empty())
-        {
-            flush();
-        }
+        const bool texture_changed = texture != current_texture_;
+
+        const bool blend_mode_changed = blend_mode != current_blend_mode_;
+
+        if ((texture_changed || blend_mode_changed) && !vertices_.empty())flush();
 
         current_texture_ = texture;
+        current_blend_mode_ = blend_mode;
 
         const f32 half_width = rect.size.x * 0.5f;
         const f32 half_height = rect.size.y * 0.5f;
@@ -241,7 +247,7 @@ float4 main(pixel_input input) : SV_TARGET
             upload_size
         );
 
-        backend_->set_pipeline_state(pipeline_);
+        backend_->set_pipeline_state(pipeline_for_blend(current_blend_mode_));
         backend_->set_vertex_buffer(vertex_buffer_);
         backend_->set_texture_2d(current_texture_, 0);
         backend_->draw(static_cast<u32>(vertices_.size()), 0);
@@ -258,6 +264,20 @@ float4 main(pixel_input input) : SV_TARGET
         }
 
         return texture;
+    }
+
+    pipeline_state_handle sprite_renderer_2d::pipeline_for_blend(render_blend_mode blend_mode)const {
+        switch (blend_mode) {
+        case render_blend_mode::opaque :
+            return opaque_pipeline_;
+        case render_blend_mode::alpha:
+            return alpha_pipeline_;
+        case render_blend_mode::additive:
+            return additive_pipeline_;
+
+        }
+
+        return alpha_pipeline_;
     }
 
     void sprite_renderer_2d::create_resources()
@@ -281,34 +301,59 @@ float4 main(pixel_input input) : SV_TARGET
             .initial_data = nullptr
         });
 
-        pipeline_ = backend_->create_pipeline_state(pipeline_state_desc{
-            .name = "sprite_2d_pipeline",
-            .shader = shader_,
-            .vertex_attributes = {
-                vertex_attribute_desc{
-                    .semantic_name = "POSITION",
-                    .semantic_index = 0,
-                    .format = vertex_attribute_format::r32g32_float,
-                    .input_slot = 0,
-                    .offset_bytes = offsetof(sprite_vertex, position)
-                },
-                vertex_attribute_desc{
-                    .semantic_name = "COLOR",
-                    .semantic_index = 0,
-                    .format = vertex_attribute_format::r32g32b32a32_float,
-                    .input_slot = 0,
-                    .offset_bytes = offsetof(sprite_vertex, color)
-                },
-                vertex_attribute_desc{
-                    .semantic_name = "TEXCOORD",
-                    .semantic_index = 0,
-                    .format = vertex_attribute_format::r32g32_float,
-                    .input_slot = 0,
-                    .offset_bytes = offsetof(sprite_vertex, uv)
-                }
+        const std::vector<vertex_attribute_desc> vertex_attributes = {
+            vertex_attribute_desc{
+                .semantic_name = "POSITION",
+                .semantic_index = 0,
+                .format = vertex_attribute_format::r32g32_float,
+                .input_slot = 0,
+                .offset_bytes = offsetof(sprite_vertex, position)
             },
-            .topology = primitive_topology::triangle_list
-        });
+            vertex_attribute_desc{
+                .semantic_name = "COLOR",
+                .semantic_index = 0,
+                .format = vertex_attribute_format::r32g32b32a32_float,
+                .input_slot = 0,
+                .offset_bytes = offsetof(sprite_vertex, color)
+            },
+            vertex_attribute_desc{
+                .semantic_name = "TEXCOORD",
+                .semantic_index = 0,
+                .format = vertex_attribute_format::r32g32_float,
+                .input_slot = 0,
+                .offset_bytes = offsetof(sprite_vertex, uv)
+            }
+        };
+
+        opaque_pipeline_ = backend_->create_pipeline_state(
+            pipeline_state_desc{
+                .name = "sprite_2d_opaque_pipeline",
+                .shader = shader_,
+                .vertex_attributes = vertex_attributes,
+                .topology = primitive_topology::triangle_list,
+                .blend_mode = render_blend_mode::opaque
+            }
+        );
+
+        alpha_pipeline_ = backend_->create_pipeline_state(
+            pipeline_state_desc{
+                .name = "sprite_2d_alpha_pipeline",
+                .shader = shader_,
+                .vertex_attributes = vertex_attributes,
+                .topology = primitive_topology::triangle_list,
+                .blend_mode = render_blend_mode::alpha
+            }
+        );
+
+        additive_pipeline_ = backend_->create_pipeline_state(
+            pipeline_state_desc{
+                .name = "sprite_2d_additive_pipeline",
+                .shader = shader_,
+                .vertex_attributes = vertex_attributes,
+                .topology = primitive_topology::triangle_list,
+                .blend_mode = render_blend_mode::additive
+            }
+        );
 
         const u8 white_pixel[4] = {
             255,

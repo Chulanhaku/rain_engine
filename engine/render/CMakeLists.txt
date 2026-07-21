@@ -5,6 +5,7 @@ target_sources(rain_render
         src/d3d11/d3d11_render_backend.cpp
         src/sprite_renderer_2d.cpp
         src/render_system_2d.cpp
+        src/material_2d_registry.cpp
 
     PUBLIC
         include/rain/render/render_backend.hpp
@@ -16,6 +17,8 @@ target_sources(rain_render
         include/rain/render/camera_2d.hpp
         include/rain/render/render_system_2d.hpp
         include/rain/render/sprite_2d_component.hpp
+        include/rain/render/material_2d.hpp
+        include/rain/render/material_2d_registry.hpp
 )
 
 

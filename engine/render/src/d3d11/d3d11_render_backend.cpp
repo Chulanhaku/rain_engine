@@ -372,6 +372,9 @@ float4 main(pixel_input input):SV_TARGET{
 		pipeline.name = desc.name;
 		pipeline.shader = desc.shader;
 		pipeline.topology = desc.topology;
+		pipeline.blend_mode = desc.blend_mode;
+
+		create_blend_state(desc.blend_mode, &pipeline.blend_state);
 
 		d3d11_shader_program& shader_program = shader_programs_[desc.shader.index];
 
@@ -415,6 +418,50 @@ float4 main(pixel_input input):SV_TARGET{
 
 	}
 
+	void d3d11_render_backend::create_blend_state(render_blend_mode blend_mode,ID3D11BlendState** out_blend_state){
+		rain_assert(out_blend_state != nullptr);
+		D3D11_BLEND_DESC blend_desc{};
+
+		D3D11_RENDER_TARGET_BLEND_DESC& target = blend_desc.RenderTarget[0];
+
+		target.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+
+		switch (blend_mode) {
+		case render_blend_mode::opaque:
+			target.BlendEnable = false;
+			break;
+		case render_blend_mode::alpha:
+			target.BlendEnable = true;
+
+			target.SrcBlend = D3D11_BLEND_SRC_ALPHA;
+			target.DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+			target.BlendOp = D3D11_BLEND_OP_ADD;
+
+			target.SrcBlendAlpha = D3D11_BLEND_ONE;
+			target.DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+			target.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+			break;
+		case render_blend_mode::additive:
+			target.BlendEnable = true;
+
+			target.SrcBlend = D3D11_BLEND_SRC_ALPHA;
+			target.DestBlend = D3D11_BLEND_ONE;
+			target.BlendOp = D3D11_BLEND_OP_ADD;
+
+			target.SrcBlendAlpha = D3D11_BLEND_ONE;
+			target.DestBlendAlpha = D3D11_BLEND_ONE;
+			target.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+
+			break;
+		}
+		
+		const HRESULT result = device_->CreateBlendState(&blend_desc, out_blend_state);
+
+		rain_assert(!failed(result));
+		rain_assert(*out_blend_state != nullptr);
+	}
+
+
 	void d3d11_render_backend::set_pipeline_state(pipeline_state_handle handle) {
 		if (!handle.is_valid() || handle.index >= pipeline_states_.size())return;
 
@@ -428,6 +475,12 @@ float4 main(pixel_input input):SV_TARGET{
 		device_context_->IASetPrimitiveTopology(to_d3d_topology(pipeline.topology));
 		device_context_->VSSetShader(shader_program.vertex_shader, nullptr, 0);
 		device_context_->PSSetShader(shader_program.pixel_shader, nullptr, 0);
+
+		constexpr float blend_factor[4]{
+			0.0f,0.0f,0.0f,0.0f
+		};
+
+		device_context_->OMSetBlendState(pipeline.blend_state,blend_factor,0xffffffff);
 	}
 
 	void d3d11_render_backend::set_vertex_buffer(render_buffer_handle handle) {
@@ -490,6 +543,7 @@ float4 main(pixel_input input):SV_TARGET{
 
 	void d3d11_render_backend::release_render_resources() {
 		for (d3d11_pipeline_state& pipeline : pipeline_states_) {
+			release_com(pipeline.blend_state);
 			release_com(pipeline.input_layout);
 		}
 
@@ -508,7 +562,6 @@ float4 main(pixel_input input):SV_TARGET{
 			release_com(shader_program.pixel_shader_blob);
 			release_com(shader_program.vertex_shader_blob);
 		}
-
 
 
 		pipeline_states_.clear();
@@ -569,7 +622,7 @@ float4 main(pixel_input input):SV_TARGET{
 			&texture.texture
 		);
 
-				rain_assert(!failed(create_texture_result));
+		rain_assert(!failed(create_texture_result));
 		rain_assert(texture.texture != nullptr);
 
 		device_context_->UpdateSubresource(

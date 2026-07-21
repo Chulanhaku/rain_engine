@@ -6,6 +6,7 @@
 #include<rain/runtime/transform_2d_component.hpp>
 #include<rain/runtime/velocity_2d_component.hpp>
 
+
 namespace sample_2d{
 	namespace {
 		rain::entity_id create_rect(
@@ -15,7 +16,8 @@ namespace sample_2d{
 			rain::f32 y,
 			rain::f32 width,
 			rain::f32 height,
-			const rain::sprite_color & color
+			rain::material_2d_handle material,
+			const rain::sprite_color &tint
 		)
 		{
 			rain::entity_id entity = target_world.create_entity(rain::world_entity_desc{
@@ -31,11 +33,10 @@ namespace sample_2d{
 			);
 
 			target_world.add_component < rain::sprite_2d_component > (entity, rain::sprite_2d_component{
-					.size = rain::vec2{.x = width,.y = height},
-					.color = color,
-					.texture = {},
+					.size rain::vec2{.x = width,.y = height},
+					.tint ==  tint,
+					.material = material,
 					.uv = {},
-					.visible = true
 				}
 			);
 
@@ -46,7 +47,7 @@ namespace sample_2d{
 
 	}
 
-	sample_2d_world_handles build_sample_2d_world(rain::world& target_world) {
+	sample_2d_world_handles build_sample_2d_world(rain::world& target_world, const sample_2d_world_materials& materials) {
 		sample_2d_world_handles handles{};
 
 		handles.moving_rect = create_rect(
@@ -56,6 +57,7 @@ namespace sample_2d{
 			80.0f,
 			120.0f,
 			120.0f,
+			materials.solid_material,
 			rain::sprite_color{
 				.r = 0.20f,
 				.g = 0.75f,
@@ -83,6 +85,7 @@ namespace sample_2d{
 			-120.0f,
 			100.0f,
 			100.0f,
+			materials.solid_material,
 			rain::sprite_color{
 				.r = 1.00f,
 				.g = 0.45f,
@@ -98,6 +101,7 @@ namespace sample_2d{
 			-80.0f,
 			180.0f,
 			90.0f,
+			materials.image_material,
 			rain::sprite_color{
 				.r = 0.35f,
 				.g = 1.00f,
@@ -113,6 +117,7 @@ namespace sample_2d{
 			0.0f,
 			40.0f,
 			40.0f,
+			materials.image_material,
 			rain::sprite_color{
 				.r = 1.00f,
 				.g = 1.00f,

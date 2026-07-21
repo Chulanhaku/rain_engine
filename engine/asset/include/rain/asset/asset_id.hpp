@@ -24,8 +24,19 @@ namespace rain {
 			return lhs.path == rhs.path;
 		}
 
-		friend bool operator!=(asset_id lhs, asset_id) {
+		friend bool operator!=(asset_id lhs, asset_id rhs) {
 			return !(lhs==rhs);
+		}
+	};
+
+}
+
+
+namespace std {
+	template<>
+	struct hash<rain::asset_id> {
+		std::size_t operator()(rain::asset_id id)const noexcept {
+			return std::hash < rain::string_id > {}(id.path);
 		}
 	};
 }

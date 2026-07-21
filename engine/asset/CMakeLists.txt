@@ -3,10 +3,12 @@ add_library(rain_asset)
 target_sources(rain_asset
 	PRIVATE
 		src/image_loader.cpp
+		src/texture_asset_registry.cpp
 	PUBLIC
 		include/rain/asset/asset_id.hpp
 		include/rain/asset/image_data.hpp
 		include/rain/asset/image_loader.hpp
+		include/rain/asset/texture_asset_registry.hpp
 )
 
 target_include_directories(rain_asset
@@ -20,6 +22,7 @@ target_include_directories(rain_asset
 target_link_libraries(rain_asset
 	PRIVATE
 		rain_core
+		rain_render
 )
 
 target_compile_features(rain_asset

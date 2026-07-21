@@ -4,7 +4,15 @@
 #include<rain/runtime/transform_2d_component.hpp>
 
 namespace rain {
-	render_system_2d::render_system_2d(render_backend&backend ,u32 max_quads):sprite_renderer_(backend,max_quads),entity_query_(make_default_entity_query()){}
+	render_system_2d::render_system_2d(
+    render_backend& backend,
+    material_2d_registry& materials,
+    u32 max_quads)
+    : sprite_renderer_(backend, max_quads)
+    , materials_(&materials)
+    , entity_query_(make_default_entity_query())
+	{
+	}
 
 	void render_system_2d::render(world& target_world, const camera_2d& camera) {
 		const entity_query_result entities = target_world.query_entities(entity_query_);
@@ -33,9 +41,15 @@ namespace rain {
 			if (!target_world.is_entity_active(entity))continue;
 
 			const sprite_2d_component& sprite = target_world.get_component<sprite_2d_component>(entity);
+			
 
-			if (!sprite.visible)continue;
+			const material_2d* material = materials_->try_get(sprite.material);
 
+			if (material == nullptr) {
+				material = materials_->try_get(materials_->default_material());
+			}
+
+			if (material == nullptr)continue;
 
 			const transform_2d_component& transform = target_world.get_component<transform_2d_component>(entity);
 
@@ -50,9 +64,10 @@ namespace rain {
 						.y = sprite.size.y * transform.scale.y
 					}
 				}, 
-				sprite.color,
-				sprite.texture,
-				sprite.uv
+				sprite.tint,
+				material->texture,
+				sprite.uv,
+				material->blend_mode
 			);
 
 		}
