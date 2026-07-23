@@ -133,35 +133,25 @@ float4 main(pixel_input input) : SV_TARGET
         current_texture_ = texture;
         current_blend_mode_ = blend_mode;
 
-        const f32 half_width = rect.size.x * 0.5f;
-        const f32 half_height = rect.size.y * 0.5f;
+        const simd_vec2 half_size = rect.size * 0.5f;
+        const vec2 half_size_scalar = half_size.to_vec2();
+        const simd_vec2 horizontal_half_size(half_size_scalar.x, 0.0f);
+        const simd_vec2 vertical_half_size(0.0f, half_size_scalar.y);
 
-        const vec2 top_left_world{
-            .x = rect.center.x - half_width,
-            .y = rect.center.y + half_height
-        };
-
-        const vec2 top_right_world{
-            .x = rect.center.x + half_width,
-            .y = rect.center.y + half_height
-        };
-
-        const vec2 bottom_right_world{
-            .x = rect.center.x + half_width,
-            .y = rect.center.y - half_height
-        };
-
-        const vec2 bottom_left_world{
-            .x = rect.center.x - half_width,
-            .y = rect.center.y - half_height
-        };
+        const simd_vec2 top_left_world =
+            rect.center - horizontal_half_size + vertical_half_size;
+        const simd_vec2 top_right_world =
+            rect.center + horizontal_half_size + vertical_half_size;
+        const simd_vec2 bottom_right_world =
+            rect.center + horizontal_half_size - vertical_half_size;
+        const simd_vec2 bottom_left_world =
+            rect.center - horizontal_half_size - vertical_half_size;
 
         push_quad_ndc(
-            active_camera_->world_to_ndc(top_left_world),
-            active_camera_->world_to_ndc(top_right_world),
-            active_camera_->world_to_ndc(bottom_right_world),
-            active_camera_->world_to_ndc(bottom_left_world),
-            color,
+            active_camera_->world_to_ndc(top_left_world.to_vec2()),
+            active_camera_->world_to_ndc(top_right_world.to_vec2()),
+            active_camera_->world_to_ndc(bottom_right_world.to_vec2()),
+            active_camera_->world_to_ndc(bottom_left_world.to_vec2()),            color,
             uv
         );
     }

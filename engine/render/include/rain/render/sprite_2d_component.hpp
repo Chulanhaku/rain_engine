@@ -12,5 +12,7 @@ namespace rain {
 		material_2d_handle material;
 		sprite_uv_rect uv{};
 
+		i32 layer = 0;
+		i32 order_in_layer = 0;
 	};
 }

@@ -379,6 +379,20 @@ public:
             4096
         );
 
+        context.scheduler->add_system({
+            .system_name = "system.render_prepare_2d",
+            .owner_name = "render",
+            .phase = rain::system_phase::render_prepare,
+            .priority = 0,
+            .enabled = true,
+
+            .entity_query =
+                rain::render_system_2d::make_entity_query(),
+
+            .function = &rain::render_prepare_system_2d,
+            .user_data = render_system_.get()
+        });
+
         world_handles_ = sample_2d::build_sample_2d_world(
             *context.target_world,
             sample_2d::sample_2d_world_materials{
@@ -418,7 +432,8 @@ public:
 
     void on_render(rain::application_context& context) override
     {
-        render_system_->render(*context.target_world, camera_);
+        (void)context;
+        render_system_->submit(camera_);
     }
 
     void toggle_moving_entity_frozen(rain::world& target_world) {

@@ -3,7 +3,7 @@
 #include<rain/core/types.hpp>
 #include<rain/render/render_handles.hpp>
 #include<rain/render/material_2d.hpp>
-
+#include<rain/render/render_types.hpp>
 #include<string>
 #include<vector>
 

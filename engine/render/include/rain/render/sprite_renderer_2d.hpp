@@ -3,6 +3,7 @@
 #include <rain/core/types.hpp>
 #include <rain/render/render_backend.hpp>
 #include <rain/render/render_handles.hpp>
+#include <rain/core/math/simd_vec2.hpp>
 #include <rain/core/math/vec2.hpp>
 #include <rain/render/camera_2d.hpp>
 
@@ -29,8 +30,8 @@ namespace rain {
 	};
 
 	struct sprite_rect_world {
-		vec2 center{ 0.0f, 0.0f };
-		vec2 size{ 100.0f, 100.0f };
+		simd_vec2 center{0.0f, 0.0f};
+		simd_vec2 size{100.0f, 100.0f};
 	};
 
 	class sprite_renderer_2d {

@@ -6,6 +6,7 @@ target_sources(rain_render
         src/sprite_renderer_2d.cpp
         src/render_system_2d.cpp
         src/material_2d_registry.cpp
+        src/render_queue_2d.cpp
 
     PUBLIC
         include/rain/render/render_backend.hpp
@@ -19,6 +20,9 @@ target_sources(rain_render
         include/rain/render/sprite_2d_component.hpp
         include/rain/render/material_2d.hpp
         include/rain/render/material_2d_registry.hpp
+        include/rain/render/render_types.hpp
+        include/rain/render/render_command_2d.hpp
+        include/rain/render/render_queue_2d.hpp
 )
 
 

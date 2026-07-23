@@ -2,15 +2,11 @@
 
 #include <rain/core/types.hpp>
 #include<rain/render/render_handles.hpp>
+#include<rain/render/render_types.hpp>
 
 #include<string>
 
 namespace rain {
-	enum class render_blend_mode :u8 {
-		opaque,
-		alpha,
-		additive
-	};
 
 	struct material_2d_desc {
 		std::string name;

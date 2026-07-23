@@ -233,9 +233,9 @@ namespace rain{
                 return 50;
             case system_phase::animation:
                 return 60;
-            case system_phase::render_prepare:
-                return 70;
             case system_phase::post_update:
+                return 70;
+            case system_phase::render_prepare:
                 return 80;
             }
 

@@ -17,7 +17,8 @@ namespace sample_2d{
 			rain::f32 width,
 			rain::f32 height,
 			rain::material_2d_handle material,
-			const rain::sprite_color &tint
+			const rain::sprite_color &tint,
+			rain::i32 order_in_layer
 		)
 		{
 			rain::entity_id entity = target_world.create_entity(rain::world_entity_desc{
@@ -33,10 +34,12 @@ namespace sample_2d{
 			);
 
 			target_world.add_component < rain::sprite_2d_component > (entity, rain::sprite_2d_component{
-					.size rain::vec2{.x = width,.y = height},
-					.tint ==  tint,
+					.size = rain::vec2{.x = width,.y = height},
+					.tint = tint,
 					.material = material,
 					.uv = {},
+					.layer = 0,
+					.order_in_layer = order_in_layer
 				}
 			);
 
@@ -63,7 +66,8 @@ namespace sample_2d{
 				.g = 0.75f,
 				.b = 1.00f,
 				.a = 1.00f
-			}
+			},
+			0
 		);
 
 		target_world.add_component<rain::velocity_2d_component>(
@@ -91,7 +95,8 @@ namespace sample_2d{
 				.g = 0.45f,
 				.b = 0.25f,
 				.a = 1.00f
-			}
+			},
+			10
 		);
 
 		handles.green_rect = create_rect(
@@ -107,7 +112,8 @@ namespace sample_2d{
 				.g = 1.00f,
 				.b = 0.45f,
 				.a = 1.00f
-			}
+			},
+			20
 		);
 
 		handles.white_rect = create_rect(
@@ -123,7 +129,8 @@ namespace sample_2d{
 				.g = 1.00f,
 				.b = 1.00f,
 				.a = 1.00f
-			}
+			},
+			30
 		);
 
 		return handles;
