@@ -17,7 +17,6 @@
 #include<cstddef>
 #include<vector>
 
-
 namespace rain {
 	namespace {
 		template<typename com_type>
@@ -276,15 +275,10 @@ float4 main(pixel_input input):SV_TARGET{
 		shader_program.vertex_shader_blob = vertex_blob;
 		shader_program.pixel_shader_blob = pixel_blob;
 
-		const u32 index = static_cast<u32>(shader_programs_.size());
-		shader_programs_.push_back(shader_program);
 
 		rain::log_info("D3D11 SHADER PROGRAM CREATED");
 
-		return shader_program_handle{
-			.index = index,
-			.generation=0
-		};
+		return shader_programs_.create(std::move(shader_program));
 	}
 
 	render_buffer_handle d3d11_render_backend::create_vertex_buffer(const render_buffer_desc& desc) {
@@ -328,97 +322,233 @@ float4 main(pixel_input input):SV_TARGET{
 		rain_assert(!failed(create_buffer_result));
 		rain_assert(buffer.buffer != nullptr);
 
-		const u32 index = static_cast<u32>(buffers_.size());
-		buffers_.push_back(buffer);
 
 		rain::log_info("d3d11 buffer created");
 
-		return render_buffer_handle{
-			.index = index,
-			.generation = 0
-		};
-
+		return buffers_.create(std::move(buffer));
 	}
 
-	void d3d11_render_backend::update_buffer(render_buffer_handle handle,const void* data,usize size_bytes) {
-		if (!handle.is_valid() || handle.index >= buffers_.size())return;
+	bool d3d11_render_backend::destroy_shader_program(
+        shader_program_handle handle) {
 
-		if (data == nullptr || size_bytes == 0) return;
+		if (!shader_programs_.is_valid(handle))return false;
 
-		d3d11_render_buffer& buffer = buffers_[handle.index];
+		bool referenced_by_pipeline = false;
 
-		rain_assert(buffer.buffer!=nullptr);
-		rain_assert(buffer.usage == render_buffer_usage::dynamic);
-		rain_assert(size_bytes <= buffer.size_bytes);
+		pipeline_states_.for_each_alive([&](pipeline_state_handle, const d3d11_pipeline_state& pipeline) {
+			if (pipeline.shader == handle)referenced_by_pipeline = true;
+		});
 
-		D3D11_MAPPED_SUBRESOURCE mapped_resource{};
-
-		const HRESULT map_result = device_context_->Map(buffer.buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_resource);
-
-		rain_assert(!failed(map_result));
-		rain_assert(mapped_resource.pData != nullptr);
-
-		std::memcpy(mapped_resource.pData, data, size_bytes);
-
-		device_context_->Unmap(buffer.buffer, 0);
-	}
-
-	pipeline_state_handle d3d11_render_backend::create_pipeline_state(const pipeline_state_desc& desc) {
-		rain_assert(desc.shader.is_valid());
-		rain_assert(desc.shader.index < shader_programs_.size());
-		rain_assert(!desc.vertex_attributes.empty());
-
-		d3d11_pipeline_state pipeline;
-		pipeline.name = desc.name;
-		pipeline.shader = desc.shader;
-		pipeline.topology = desc.topology;
-		pipeline.blend_mode = desc.blend_mode;
-
-		create_blend_state(desc.blend_mode, &pipeline.blend_state);
-
-		d3d11_shader_program& shader_program = shader_programs_[desc.shader.index];
-
-		std::vector<D3D11_INPUT_ELEMENT_DESC>input_elements;
-		input_elements.reserve(desc.vertex_attributes.size());
-
-		for (const vertex_attribute_desc& attribute : desc.vertex_attributes) {
-			D3D11_INPUT_ELEMENT_DESC element{};
-			element.SemanticName = attribute.semantic_name.c_str();
-			element.SemanticIndex = attribute.semantic_index;
-			element.Format = to_dxgi_format(attribute.format);
-			element.InputSlot = attribute.input_slot;
-			element.AlignedByteOffset = attribute.offset_bytes;
-			element.InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
-			element.InstanceDataStepRate = 0;
-
-			input_elements.push_back(element);
-
+		if (referenced_by_pipeline) {
+			rain::log_error("cannot destroy shader:live pipeline still");
+			return false;
 		}
 
-		const HRESULT create_layout_result = device_->CreateInputLayout(
-			input_elements.data(),
-			static_cast<UINT>(input_elements.size()),
-			shader_program.vertex_shader_blob->GetBufferPointer(),
-			shader_program.vertex_shader_blob->GetBufferSize(),
-			&pipeline.input_layout
-		);
+		if (current_shader_ == handle) {
+			device_context_->VSSetShader(nullptr, nullptr, 0);
+		
+			device_context_->PSSetShader(nullptr, nullptr, 0);
 
-		rain_assert(!failed(create_layout_result));
-		rain_assert(pipeline.input_layout != nullptr);
+			current_shader_ = shader_program_handle{};
+		
+		}
+        return shader_programs_.request_destroy(handle);
+    }
 
-		const u32 index = static_cast<u32>(pipeline_states_.size());
-		pipeline_states_.push_back(pipeline);
+    bool d3d11_render_backend::destroy_render_buffer(
+        render_buffer_handle handle) {
 
-		rain::log_info("D3D11 pipeline state created");
+		if (!buffers_.is_valid(handle))return false;
 
-		return pipeline_state_handle{
-			.index = index,
-			.generation = 0
-		};
+		if (current_vertex_buffer_ == handle) {
+			ID3D11Buffer* null_buffer = nullptr;
 
-	}
+			constexpr UINT zerp = 0;
 
-	void d3d11_render_backend::create_blend_state(render_blend_mode blend_mode,ID3D11BlendState** out_blend_state){
+			device_context_->IASetVertexBuffers(0, 1, &null_buffer, &zero, &zero);
+
+			current_vertex_buffer_ = render_buffer_handle{};
+		}
+
+
+        return buffers_.request_destroy(handle);
+    }
+
+    bool d3d11_render_backend::destroy_pipeline_state(
+        pipeline_state_handle handle) {
+
+		if (!pipeline_states_.is_valid(handle))return false;
+
+		if (current_pipeline_ == handle) {
+			device_context_->IASetInputLayout(nullptr);
+
+			device_context_->OMSetBlendState(nullptr, nullptr, 0xffffffff);
+
+			current_pipeline_ = pipeline_state_handle{};
+		}
+
+        return pipeline_states_.request_destroy(handle);
+    }
+
+    bool d3d11_render_backend::destroy_texture_2d(
+        texture_2d_handle handle) {
+
+		if (!textures_.is_valid(handle))return false;
+
+		for (u32 solt = 0; slot < D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT; ++slot) {
+			if (current_pixel_textures_[slot] != handle) {
+				continue;
+			}
+
+			ID3D11ShaderResourceView* null_view = nullptr;
+
+			device_context_->PSSetShaderResources(
+				slot,
+				1,
+				&null_view
+			);
+
+			current_pixel_textures_[slot] = texture_2d_handle{};
+		}
+
+        return textures_.request_destroy(handle);
+    }
+
+    bool d3d11_render_backend::is_valid(
+        shader_program_handle handle) const {
+        return shader_programs_.is_valid(handle);
+    }
+
+    bool d3d11_render_backend::is_valid(
+        render_buffer_handle handle) const {
+        return buffers_.is_valid(handle);
+    }
+
+    bool d3d11_render_backend::is_valid(
+        pipeline_state_handle handle) const {
+        return pipeline_states_.is_valid(handle);
+    }
+
+    bool d3d11_render_backend::is_valid(
+        texture_2d_handle handle) const {
+        return textures_.is_valid(handle);
+    }
+
+    void d3d11_render_backend::flush_resource_destruction() {
+        pipeline_states_.flush_pending_destruction(
+            [](d3d11_pipeline_state& pipeline) {
+                release_com(pipeline.blend_state);
+                release_com(pipeline.input_layout);
+            }
+        );
+
+        buffers_.flush_pending_destruction(
+            [](d3d11_render_buffer& buffer) {
+                release_com(buffer.buffer);
+            }
+        );
+
+        textures_.flush_pending_destruction(
+            [](d3d11_texture_2d& texture) {
+                release_com(texture.shader_resource_view);
+                release_com(texture.texture);
+            }
+        );
+
+        shader_programs_.flush_pending_destruction(
+            [](d3d11_shader_program& shader_program) {
+                release_com(shader_program.pixel_shader);
+                release_com(shader_program.vertex_shader);
+                release_com(shader_program.pixel_shader_blob);
+                release_com(shader_program.vertex_shader_blob);
+            }
+        );
+    }
+
+    void d3d11_render_backend::update_buffer(
+        render_buffer_handle handle,
+        const void* data,
+        usize size_bytes) {
+        if (data == nullptr || size_bytes == 0) {
+            return;
+        }
+
+        d3d11_render_buffer* buffer = buffers_.try_get(handle);
+        if (buffer == nullptr) {
+            return;
+        }
+
+        rain_assert(buffer->buffer != nullptr);
+        rain_assert(buffer->usage == render_buffer_usage::dynamic);
+        rain_assert(size_bytes <= buffer->size_bytes);
+
+        D3D11_MAPPED_SUBRESOURCE mapped_resource{};
+        const HRESULT map_result = device_context_->Map(
+            buffer->buffer,
+            0,
+            D3D11_MAP_WRITE_DISCARD,
+            0,
+            &mapped_resource
+        );
+
+        rain_assert(!failed(map_result));
+        rain_assert(mapped_resource.pData != nullptr);
+
+        std::memcpy(mapped_resource.pData, data, size_bytes);
+        device_context_->Unmap(buffer->buffer, 0);
+    }
+
+pipeline_state_handle d3d11_render_backend::create_pipeline_state(
+        const pipeline_state_desc& desc) {
+        if (desc.vertex_attributes.empty()) {
+            return pipeline_state_handle{};
+        }
+
+        d3d11_shader_program* shader_program =
+            shader_programs_.try_get(desc.shader);
+        if (shader_program == nullptr) {
+            return pipeline_state_handle{};
+        }
+
+        d3d11_pipeline_state pipeline;
+        pipeline.name = desc.name;
+        pipeline.shader = desc.shader;
+        pipeline.topology = desc.topology;
+        pipeline.blend_mode = desc.blend_mode;
+
+        create_blend_state(desc.blend_mode, &pipeline.blend_state);
+
+        std::vector<D3D11_INPUT_ELEMENT_DESC> input_elements;
+        input_elements.reserve(desc.vertex_attributes.size());
+
+        for (const vertex_attribute_desc& attribute : desc.vertex_attributes) {
+            D3D11_INPUT_ELEMENT_DESC element{};
+            element.SemanticName = attribute.semantic_name.c_str();
+            element.SemanticIndex = attribute.semantic_index;
+            element.Format = to_dxgi_format(attribute.format);
+            element.InputSlot = attribute.input_slot;
+            element.AlignedByteOffset = attribute.offset_bytes;
+            element.InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
+            element.InstanceDataStepRate = 0;
+            input_elements.push_back(element);
+        }
+
+        const HRESULT create_layout_result = device_->CreateInputLayout(
+            input_elements.data(),
+            static_cast<UINT>(input_elements.size()),
+            shader_program->vertex_shader_blob->GetBufferPointer(),
+            shader_program->vertex_shader_blob->GetBufferSize(),
+            &pipeline.input_layout
+        );
+
+        rain_assert(!failed(create_layout_result));
+        rain_assert(pipeline.input_layout != nullptr);
+        rain::log_info("D3D11 pipeline state created");
+
+        return pipeline_states_.create(std::move(pipeline));
+    }
+
+void d3d11_render_backend::create_blend_state(render_blend_mode blend_mode,ID3D11BlendState** out_blend_state){
 		rain_assert(out_blend_state != nullptr);
 		D3D11_BLEND_DESC blend_desc{};
 
@@ -462,48 +592,62 @@ float4 main(pixel_input input):SV_TARGET{
 	}
 
 
-	void d3d11_render_backend::set_pipeline_state(pipeline_state_handle handle) {
-		if (!handle.is_valid() || handle.index >= pipeline_states_.size())return;
+	void d3d11_render_backend::set_pipeline_state(
+        pipeline_state_handle handle) {
+        d3d11_pipeline_state* pipeline = pipeline_states_.try_get(handle);
+        if (pipeline == nullptr) {
+            return;
+        }
 
-		d3d11_pipeline_state& pipeline = pipeline_states_[handle.index];
+        d3d11_shader_program* shader_program =
+            shader_programs_.try_get(pipeline->shader);
+        if (shader_program == nullptr) {
+            return;
+        }
 
-		if (!pipeline.shader.is_valid() || pipeline.shader.index >= shader_programs_.size())return;
+        device_context_->IASetInputLayout(pipeline->input_layout);
+        device_context_->IASetPrimitiveTopology(
+            to_d3d_topology(pipeline->topology)
+        );
+        device_context_->VSSetShader(
+            shader_program->vertex_shader,
+            nullptr,
+            0
+        );
+        device_context_->PSSetShader(
+            shader_program->pixel_shader,
+            nullptr,
+            0
+        );
 
-		d3d11_shader_program& shader_program = shader_programs_[pipeline.shader.index];
+        constexpr float blend_factor[4]{0.0f, 0.0f, 0.0f, 0.0f};
+        device_context_->OMSetBlendState(
+            pipeline->blend_state,
+            blend_factor,
+            0xffffffff
+        );
+    }
 
-		device_context_->IASetInputLayout(pipeline.input_layout);
-		device_context_->IASetPrimitiveTopology(to_d3d_topology(pipeline.topology));
-		device_context_->VSSetShader(shader_program.vertex_shader, nullptr, 0);
-		device_context_->PSSetShader(shader_program.pixel_shader, nullptr, 0);
+void d3d11_render_backend::set_vertex_buffer(
+        render_buffer_handle handle) {
+        d3d11_render_buffer* buffer = buffers_.try_get(handle);
+        if (buffer == nullptr || buffer->buffer == nullptr) {
+            return;
+        }
 
-		constexpr float blend_factor[4]{
-			0.0f,0.0f,0.0f,0.0f
-		};
+        const UINT stride = buffer->stride_bytes;
+        constexpr UINT offset = 0;
 
-		device_context_->OMSetBlendState(pipeline.blend_state,blend_factor,0xffffffff);
-	}
+        device_context_->IASetVertexBuffers(
+            0,
+            1,
+            &buffer->buffer,
+            &stride,
+            &offset
+        );
+    }
 
-	void d3d11_render_backend::set_vertex_buffer(render_buffer_handle handle) {
-		if (!handle.is_valid() || handle.index >= buffers_.size())return;
-
-		d3d11_render_buffer& buffer = buffers_[handle.index];
-
-		if (buffer.buffer == nullptr)return;
-
-		const UINT stride = buffer.stride_bytes;
-		constexpr UINT offset = 0;
-
-		device_context_->IASetVertexBuffers(
-			0,
-			1,
-			&buffer.buffer,
-			&stride,
-			&offset
-		);
-
-	}
-
-	void d3d11_render_backend::draw(u32 vertex_count, u32 start_vertex){
+void d3d11_render_backend::draw(u32 vertex_count, u32 start_vertex){
 		device_context_->Draw(
 			static_cast<UINT>(vertex_count),
 			static_cast<UINT>(start_vertex)
@@ -542,35 +686,29 @@ float4 main(pixel_input input):SV_TARGET{
 	}
 
 	void d3d11_render_backend::release_render_resources() {
-		for (d3d11_pipeline_state& pipeline : pipeline_states_) {
-			release_com(pipeline.blend_state);
-			release_com(pipeline.input_layout);
-		}
+        pipeline_states_.release_all([](d3d11_pipeline_state& pipeline) {
+            release_com(pipeline.blend_state);
+            release_com(pipeline.input_layout);
+        });
 
-		for (d3d11_render_buffer& buffer : buffers_) {
-			release_com(buffer.buffer);
-		}
+        buffers_.release_all([](d3d11_render_buffer& buffer) {
+            release_com(buffer.buffer);
+        });
 
-		for (d3d11_texture_2d& texture : textures_) {
-			release_com(texture.shader_resource_view);
-			release_com(texture.texture);
-		}
+        textures_.release_all([](d3d11_texture_2d& texture) {
+            release_com(texture.shader_resource_view);
+            release_com(texture.texture);
+        });
 
-		for (d3d11_shader_program& shader_program : shader_programs_) {
-			release_com(shader_program.pixel_shader);
-			release_com(shader_program.vertex_shader);
-			release_com(shader_program.pixel_shader_blob);
-			release_com(shader_program.vertex_shader_blob);
-		}
+        shader_programs_.release_all([](d3d11_shader_program& shader_program) {
+            release_com(shader_program.pixel_shader);
+            release_com(shader_program.vertex_shader);
+            release_com(shader_program.pixel_shader_blob);
+            release_com(shader_program.vertex_shader_blob);
+        });
+    }
 
-
-		pipeline_states_.clear();
-		buffers_.clear();
-		shader_programs_.clear();
-		textures_.clear();
-	}
-
-	void d3d11_render_backend::create_default_sampler() {
+void d3d11_render_backend::create_default_sampler() {
 		D3D11_SAMPLER_DESC desc{};
 		desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
 		desc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
@@ -649,32 +787,39 @@ float4 main(pixel_input input):SV_TARGET{
 		rain_assert(!failed(create_srv_result));
 		rain_assert(texture.shader_resource_view != nullptr);
 		
-		const u32 index = static_cast<u32>(textures_.size());
-		textures_.push_back(texture);
 
 		rain::log_info("D3D11 texture created");
 
-		return texture_2d_handle{ .index = index,.generation = 0 };
+		return textures_.create(std::move(texture));
 	}
 
-	void d3d11_render_backend::set_texture_2d(texture_2d_handle handle, u32 slot) {
-		if (!handle.is_valid() || handle.index >= textures_.size()) {
-			return;
-		}
-		d3d11_texture_2d& texture = textures_[handle.index];
+	void d3d11_render_backend::set_texture_2d(
+        texture_2d_handle handle,
+        u32 slot) {
+        d3d11_texture_2d* texture = textures_.try_get(handle);
+        if (texture == nullptr || texture->shader_resource_view == nullptr) {
+            return;
+        }
 
-		if (texture.shader_resource_view == nullptr)return;
+        ID3D11ShaderResourceView* views[] = {
+            texture->shader_resource_view
+        };
+        device_context_->PSSetShaderResources(
+            static_cast<UINT>(slot),
+            1,
+            views
+        );
 
-		ID3D11ShaderResourceView* views[] = { texture.shader_resource_view };
+        if (default_sampler_ != nullptr) {
+            device_context_->PSSetSamplers(
+                static_cast<UINT>(slot),
+                1,
+                &default_sampler_
+            );
+        }
+    }
 
-		device_context_->PSSetShaderResources(static_cast<UINT>(slot), 1, views);
-
-		if (default_sampler_ != nullptr) {
-			device_context_->PSSetSamplers(static_cast<UINT>(slot), 1, &default_sampler_);
-		}
-	}
-
-	void d3d11_render_backend::create_device() {
+void d3d11_render_backend::create_device() {
 		UINT create_device_flags = 0;
 #if defined(_DEBUG)
 		create_device_flags |= D3D11_CREATE_DEVICE_DEBUG;

@@ -23,6 +23,25 @@ namespace rain {
 		[[nodiscard]] virtual pipeline_state_handle create_pipeline_state(const pipeline_state_desc&desc) = 0;
 		[[nodiscard]] virtual texture_2d_handle create_texture_2d(const texture_2d_desc& desc) = 0;
 
+		virtual bool destroy_shader_program(shader_program_handle handle) = 0;
+		virtual bool destroy_render_buffer(render_buffer_handle handle) = 0;
+		virtual bool destroy_pipeline_state(pipeline_state_handle handle) = 0;
+		virtual bool destroy_texture_2d(texture_2d_handle handle) = 0;
+		
+        [[nodiscard]] virtual bool is_valid(
+            shader_program_handle handle) const = 0;
+
+        [[nodiscard]] virtual bool is_valid(
+            render_buffer_handle handle) const = 0;
+
+        [[nodiscard]] virtual bool is_valid(
+            pipeline_state_handle handle) const = 0;
+
+        [[nodiscard]] virtual bool is_valid(
+            texture_2d_handle handle) const = 0;
+
+        virtual void flush_resource_destruction() = 0;
+
 		virtual void set_pipeline_state(pipeline_state_handle handle) = 0;
 		virtual void set_vertex_buffer(render_buffer_handle handle) = 0;
 		virtual void draw(u32 vertex_count,u32 start_vertex) = 0;

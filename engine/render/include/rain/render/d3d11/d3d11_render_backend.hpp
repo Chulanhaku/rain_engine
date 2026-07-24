@@ -6,8 +6,209 @@
 #include<dxgi.h>
 #include<d3dcompiler.h>
 #include<vector>
+#include<array>
 
-namespace rain {
+
+	namespace rain {
+	template <typename handle_type, typename resource_type>
+	class d3d11_resource_pool
+	{
+	private:
+		struct resource_slot
+		{
+			resource_type resource{};
+
+			u32 generation = 0;
+
+			bool alive = false;
+			bool pending_destroy = false;
+		};
+
+	public:
+		[[nodiscard]] handle_type create(resource_type resource)
+		{
+			u32 index = 0;
+
+			if (!free_indices_.empty())
+			{
+				index = free_indices_.back();
+				free_indices_.pop_back();
+
+				resource_slot& slot = slots_[index];
+
+				slot.resource = std::move(resource);
+				slot.alive = true;
+				slot.pending_destroy = false;
+			}
+			else
+			{
+				index = static_cast<u32>(slots_.size());
+
+				resource_slot slot;
+				slot.resource = std::move(resource);
+				slot.generation = 0;
+				slot.alive = true;
+				slot.pending_destroy = false;
+
+				slots_.push_back(std::move(slot));
+			}
+
+			return handle_type{
+				.index = index,
+				.generation = slots_[index].generation
+			};
+		}
+
+		[[nodiscard]] bool is_valid(handle_type handle) const
+		{
+			if (!handle.is_valid())
+			{
+				return false;
+			}
+
+			if (handle.index >= slots_.size())
+			{
+				return false;
+			}
+
+			const resource_slot& slot = slots_[handle.index];
+
+			return slot.alive &&
+				!slot.pending_destroy &&
+				slot.generation == handle.generation;
+		}
+
+		[[nodiscard]] resource_type* try_get(handle_type handle)
+		{
+			if (!is_valid(handle))
+			{
+				return nullptr;
+			}
+
+			return &slots_[handle.index].resource;
+		}
+
+		[[nodiscard]] const resource_type* try_get(
+			handle_type handle) const
+		{
+			if (!is_valid(handle))
+			{
+				return nullptr;
+			}
+
+			return &slots_[handle.index].resource;
+		}
+
+		bool request_destroy(handle_type handle)
+		{
+			if (!is_valid(handle))
+			{
+				return false;
+			}
+
+			resource_slot& slot = slots_[handle.index];
+
+			slot.alive = false;
+			slot.pending_destroy = true;
+
+			++slot.generation;
+
+			pending_destroy_indices_.push_back(handle.index);
+
+			return true;
+		}
+
+		template <typename release_function>
+		void flush_pending_destruction(
+			release_function&& release_resource)
+		{
+			for (u32 index : pending_destroy_indices_)
+			{
+				resource_slot& slot = slots_[index];
+
+				if (!slot.pending_destroy)
+				{
+					continue;
+				}
+
+				release_resource(slot.resource);
+
+				slot.resource = resource_type{};
+				slot.pending_destroy = false;
+
+				free_indices_.push_back(index);
+			}
+
+			pending_destroy_indices_.clear();
+		}
+
+		template <typename release_function>
+		void release_all(release_function&& release_resource)
+		{
+			for (resource_slot& slot : slots_)
+			{
+				if (slot.alive || slot.pending_destroy)
+				{
+					release_resource(slot.resource);
+				}
+
+				slot.resource = resource_type{};
+				slot.alive = false;
+				slot.pending_destroy = false;
+			}
+
+			slots_.clear();
+			free_indices_.clear();
+			pending_destroy_indices_.clear();
+		}
+
+		template <typename function_type>
+		void for_each_alive(function_type&& function) const
+		{
+			for (u32 index = 0;
+				index < static_cast<u32>(slots_.size());
+				++index)
+			{
+				const resource_slot& slot = slots_[index];
+
+				if (!slot.alive || slot.pending_destroy)
+				{
+					continue;
+				}
+
+				const handle_type handle{
+					.index = index,
+					.generation = slot.generation
+				};
+
+				function(handle, slot.resource);
+			}
+		}
+
+		[[nodiscard]] usize live_count() const
+		{
+			usize result = 0;
+
+			for (const resource_slot& slot : slots_)
+			{
+				if (slot.alive && !slot.pending_destroy)
+				{
+					++result;
+				}
+			}
+
+			return result;
+		}
+
+	private:
+		std::vector<resource_slot> slots_;
+		std::vector<u32> free_indices_;
+		std::vector<u32> pending_destroy_indices_;
+	};
+
+
+
+
 	class rain_window;
 
 	[[nodiscard]] std::unique_ptr<render_backend>create_d3d11_render_backend(rain_window& target_window);
@@ -42,7 +243,20 @@ namespace rain {
 		void update_buffer(render_buffer_handle handle,const void* data,usize size_bytes);
 
 		void draw(u32 vertex_count, u32 start_vertex)override;
-		[[nodiscard]] virtual texture_2d_handle create_texture_2d(const texture_2d_desc& desc);
+		[[nodiscard]] texture_2d_handle create_texture_2d(
+			const texture_2d_desc& desc) override;
+
+		bool destroy_shader_program(shader_program_handle handle) override;
+		bool destroy_render_buffer(render_buffer_handle handle) override;
+		bool destroy_pipeline_state(pipeline_state_handle handle) override;
+		bool destroy_texture_2d(texture_2d_handle handle) override;
+
+		[[nodiscard]] bool is_valid(shader_program_handle handle) const override;
+		[[nodiscard]] bool is_valid(render_buffer_handle handle) const override;
+		[[nodiscard]] bool is_valid(pipeline_state_handle handle) const override;
+		[[nodiscard]] bool is_valid(texture_2d_handle handle) const override;
+
+		void flush_resource_destruction() override;
 
 		void set_texture_2d(texture_2d_handle handle, u32 slot);
 	private:
@@ -117,18 +331,25 @@ namespace rain {
 		ID3D11InputLayout* debug_input_layout_ = nullptr;
 		ID3D11Buffer* debug_vertex_buffer_ = nullptr;
 
-		std::vector<d3d11_shader_program> shader_programs_;
-		std::vector<d3d11_render_buffer>buffers_;
-		std::vector<d3d11_pipeline_state>pipeline_states_;
-
 		shader_program_handle debug_triangle_shader_;
 		render_buffer_handle debug_triangle_vertex_buffer_;
 		pipeline_state_handle debug_triangle_pipeline_;
 
+		d3d11_resource_pool<shader_program_handle,d3d11_shader_program> shader_programs_;
+		d3d11_resource_pool<render_buffer_handle, d3d11_render_buffer>buffers_;
+		d3d11_resource_pool<pipeline_state_handle, d3d11_pipeline_state>pipeline_states_;
+
+		shader_program_handle current_shader_;
+		render_buffer_handle current_vertex_buffer_;
+		pipeline_state_handle current_pipeline_;
+
 		D3D_FEATURE_LEVEL feature_level_ = D3D_FEATURE_LEVEL_11_0;
 
-		std:: vector<d3d11_texture_2d>textures_;
+		d3d11_resource_pool<texture_2d_handle, d3d11_texture_2d>textures_;
 		ID3D11SamplerState* default_sampler_ = nullptr;
+
+		std::array<texture_2d_handle, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT>current_pixel_textures_{};
+
 	};
 
 
