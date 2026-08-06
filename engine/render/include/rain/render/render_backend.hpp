@@ -6,6 +6,13 @@
 #include<rain/render/render_handles.hpp>
 
 namespace rain {
+
+	enum class render_buffer_bind :u8 {
+		vertex_buffer,
+		index_buffer,
+		constant_buffer
+	};
+
 	class render_backend {
 	public:
 		virtual~render_backend() = default;
@@ -50,5 +57,16 @@ namespace rain {
 
 		[[nodiscard]] virtual u32 width()const = 0;
 		[[nodiscard]] virtual u32 height()const = 0;
+
+		virtual void clear_depth(f32 depth = 1.0f) = 0;
+
+		[[nodiscard]] virtual render_buffer_handle create_index_buffer(const render_buffer_desc& desc) = 0;
+		[[nodiscard]] virtual render_buffer_handle create_constant_buffer(const render_buffer_desc& desc) = 0;
+
+		virtual void set_index_buffer(render_buffer_handle handle, render_index_format format) = 0;
+		virtual void set_vertex_buffer(render_buffer_handle handle, u32 slot) = 0;
+
+		virtual void set_pixel_constant_buffer(render_buffer_handle handle, u32 slot) = 0;
+		virtual void draw_indexed(u32 index_count,u32 start_index,i32 base_vertex)=0;
 	};
 }

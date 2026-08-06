@@ -88,5 +88,13 @@ namespace rain {
 
 		primitive_topology topology = primitive_topology::triangle_list;
 		render_blend_mode blend_mode = render_blend_mode::opaque;
+
+		render_cull_mode cull_mode = render_cull_mode::none;
+
+		bool front_counter_clockwise = false;
+		bool depth_test_enabled = false;
+		bool depth_write_enabled = false;
+
+		render_compare_operation depth_compare = render_compare_operation::less_equal;
 	};
 }

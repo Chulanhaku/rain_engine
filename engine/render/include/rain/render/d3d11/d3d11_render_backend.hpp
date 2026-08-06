@@ -259,6 +259,8 @@
 		void flush_resource_destruction() override;
 
 		void set_texture_2d(texture_2d_handle handle, u32 slot);
+
+		void draw_indexed(u32 index_count, u32 start_index, i32 base_vertex)override;
 	private:
 		void initialize();
 		void shutdown();
@@ -270,6 +272,8 @@
 		void release_render_resources();
 		void set_viewport();
 		void create_blend_state(render_blend_mode belnd_mode,ID3D11BlendState** out_blend_state);
+		void create_depth_stencil();
+		void clear_depth(f32 depth)override;
 	private:
 		struct d3d11_shader_program {
 			std::string name;
@@ -303,6 +307,8 @@
 
 			primitive_topology topology = primitive_topology::triangle_list;
 			render_blend_mode blend_mode = render_blend_mode::opaque;
+			ID3D11RasterizerState* rasterizer_state = nullptr;
+			ID3D11DepthStencilState* depth_stencil_state = nullptr;
 		};
 
 		struct d3d11_texture_2d {
@@ -349,6 +355,9 @@
 		ID3D11SamplerState* default_sampler_ = nullptr;
 
 		std::array<texture_2d_handle, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT>current_pixel_textures_{};
+
+		ID3D11Texture2D* depth_texture_ = nullptr;
+		ID3D11DepthStencilView* depth_stencil_view_ = nullptr;
 
 	};
 

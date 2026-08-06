@@ -13,6 +13,9 @@ namespace rain {
 		,clear_color_(desc.clear_color)
 	{
 		assets_ = std::make_unique<texture_asset_registry>(*renderer_);
+		meshes_3d_ = std::make_unique<mesh_3d_registry>(*renderer_);
+		materials_3d_ = std::make_unique<material_3d_registry>();
+
 		rain::log_info("app start");
 	}
 
@@ -22,7 +25,11 @@ namespace rain {
 		for (auto layer_iter =layers_.rbegin(); layer_iter != layers_.rend(); layer_iter++) {
 			(*layer_iter)->on_detach(context);
 		}
+		layers_.clear();
+
 		assets_.reset();
+		if (renderer_ != nullptr)renderer_->flush_resource_destruction();
+
 		renderer_.reset();
 
 		rain::log_info("app down");
@@ -67,6 +74,7 @@ namespace rain {
 
 			renderer_->begin_frame();
 			renderer_->clear(clear_color_);
+			renderer_->clear_depth(1.0f);
 
 			for (std::unique_ptr<layer>& current_layer : layers_) {
 				current_layer->on_render(context);
@@ -159,10 +167,12 @@ namespace rain {
 			.main_window = &main_window_,
 			.target_world = &target_world_,
 			.events = &events_,
-            .scheduler = &scheduler_,
+			.scheduler = &scheduler_,
 			.renderer = renderer_.get(),
 			.assets = assets_.get(),
 			.materials = &materials_,
+			.meshes_3d = meshes_3d_.get(),
+			.materials_3d = materials_3d_.get(),
             .delta_seconds = delta_seconds,
             .frame_index = frame_index_,
 			.input = &input_

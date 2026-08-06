@@ -87,7 +87,7 @@ namespace rain {
 			switch (format) {
 			case texture_format::rgba8_unorm:
 					return DXGI_FORMAT_R8G8B8A8_UNORM;
-				
+
 			}
 
 			return DXGI_FORMAT_UNKNOWN;
@@ -115,11 +115,11 @@ namespace rain {
 struct vertex_input{
 float2 position :POSITION;
 float4 color:COLOR;
-};			
-			
+};
+
 struct vertex_output{
 	float4 position : SV_POSITION;
-	float4 color:COLOR; 
+	float4 color:COLOR;
 };
 
 vertex_output main(vertex_input input){
@@ -127,8 +127,8 @@ vertex_output main(vertex_input input){
 	output.position = float4(input.position,0.0f,1.0f);
 	output.color = input.color;
 	return output;
-}	
-		
+}
+
 )";
 
 
@@ -136,13 +136,13 @@ vertex_output main(vertex_input input){
 struct pixel_input{
 	float4 position :SV_POSITION;
 	float4 color:COLOR;
-};			
-			
+};
+
 
 float4 main(pixel_input input):SV_TARGET{
 	return input.color;
-}	
-		
+}
+
 )";
 	}
 
@@ -196,6 +196,8 @@ float4 main(pixel_input input):SV_TARGET{
 		if (FAILED(present_result)) {
 			rain::log_error("d3d11 present failed::0x%08X");
 		}
+
+		flush_resource_destruction();
 	}
 
 	void d3d11_render_backend::resize(u32 width, u32 height) {
@@ -224,6 +226,7 @@ float4 main(pixel_input input):SV_TARGET{
 		}
 
 		create_render_target_view();
+		create_depth_stencil();
 		set_viewport();
 
 		rain::log_info("d3d11 resized xu");
@@ -346,11 +349,11 @@ float4 main(pixel_input input):SV_TARGET{
 
 		if (current_shader_ == handle) {
 			device_context_->VSSetShader(nullptr, nullptr, 0);
-		
+
 			device_context_->PSSetShader(nullptr, nullptr, 0);
 
 			current_shader_ = shader_program_handle{};
-		
+
 		}
         return shader_programs_.request_destroy(handle);
     }
@@ -363,7 +366,7 @@ float4 main(pixel_input input):SV_TARGET{
 		if (current_vertex_buffer_ == handle) {
 			ID3D11Buffer* null_buffer = nullptr;
 
-			constexpr UINT zerp = 0;
+			constexpr UINT zero = 0;
 
 			device_context_->IASetVertexBuffers(0, 1, &null_buffer, &zero, &zero);
 
@@ -395,7 +398,7 @@ float4 main(pixel_input input):SV_TARGET{
 
 		if (!textures_.is_valid(handle))return false;
 
-		for (u32 solt = 0; slot < D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT; ++slot) {
+		for (u32 slot = 0; slot < D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT; ++slot) {
 			if (current_pixel_textures_[slot] != handle) {
 				continue;
 			}
@@ -498,57 +501,103 @@ float4 main(pixel_input input):SV_TARGET{
         device_context_->Unmap(buffer->buffer, 0);
     }
 
-pipeline_state_handle d3d11_render_backend::create_pipeline_state(
-        const pipeline_state_desc& desc) {
-        if (desc.vertex_attributes.empty()) {
-            return pipeline_state_handle{};
-        }
+	pipeline_state_handle d3d11_render_backend::create_pipeline_state(const pipeline_state_desc& desc) {
+		if (desc.vertex_attributes.empty()) {
+			return pipeline_state_handle{};
+		}
 
-        d3d11_shader_program* shader_program =
-            shader_programs_.try_get(desc.shader);
-        if (shader_program == nullptr) {
-            return pipeline_state_handle{};
-        }
+		d3d11_shader_program* shader_program =
+			shader_programs_.try_get(desc.shader);
+		if (shader_program == nullptr) {
+			return pipeline_state_handle{};
+		}
 
-        d3d11_pipeline_state pipeline;
-        pipeline.name = desc.name;
-        pipeline.shader = desc.shader;
-        pipeline.topology = desc.topology;
-        pipeline.blend_mode = desc.blend_mode;
+		d3d11_pipeline_state pipeline;
+		pipeline.name = desc.name;
+		pipeline.shader = desc.shader;
+		pipeline.topology = desc.topology;
+		pipeline.blend_mode = desc.blend_mode;
 
-        create_blend_state(desc.blend_mode, &pipeline.blend_state);
+		create_blend_state(desc.blend_mode, &pipeline.blend_state);
 
-        std::vector<D3D11_INPUT_ELEMENT_DESC> input_elements;
-        input_elements.reserve(desc.vertex_attributes.size());
+		std::vector<D3D11_INPUT_ELEMENT_DESC> input_elements;
+		input_elements.reserve(desc.vertex_attributes.size());
 
-        for (const vertex_attribute_desc& attribute : desc.vertex_attributes) {
-            D3D11_INPUT_ELEMENT_DESC element{};
-            element.SemanticName = attribute.semantic_name.c_str();
-            element.SemanticIndex = attribute.semantic_index;
-            element.Format = to_dxgi_format(attribute.format);
-            element.InputSlot = attribute.input_slot;
-            element.AlignedByteOffset = attribute.offset_bytes;
-            element.InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
-            element.InstanceDataStepRate = 0;
-            input_elements.push_back(element);
-        }
+		for (const vertex_attribute_desc& attribute : desc.vertex_attributes) {
+			D3D11_INPUT_ELEMENT_DESC element{};
+			element.SemanticName = attribute.semantic_name.c_str();
+			element.SemanticIndex = attribute.semantic_index;
+			element.Format = to_dxgi_format(attribute.format);
+			element.InputSlot = attribute.input_slot;
+			element.AlignedByteOffset = attribute.offset_bytes;
+			element.InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
+			element.InstanceDataStepRate = 0;
+			input_elements.push_back(element);
+		}
 
-        const HRESULT create_layout_result = device_->CreateInputLayout(
-            input_elements.data(),
-            static_cast<UINT>(input_elements.size()),
-            shader_program->vertex_shader_blob->GetBufferPointer(),
-            shader_program->vertex_shader_blob->GetBufferSize(),
-            &pipeline.input_layout
-        );
+		const HRESULT create_layout_result = device_->CreateInputLayout(
+			input_elements.data(),
+			static_cast<UINT>(input_elements.size()),
+			shader_program->vertex_shader_blob->GetBufferPointer(),
+			shader_program->vertex_shader_blob->GetBufferSize(),
+			&pipeline.input_layout
+		);
 
-        rain_assert(!failed(create_layout_result));
-        rain_assert(pipeline.input_layout != nullptr);
-        rain::log_info("D3D11 pipeline state created");
+		rain_assert(!failed(create_layout_result));
+		rain_assert(pipeline.input_layout != nullptr);
+		//rasterizer
+		D3D11_RASTERIZER_DESC rasterizer_desc{};
 
-        return pipeline_states_.create(std::move(pipeline));
-    }
+		rasterizer_desc.FillMode = D3D11_FILL_SOLID;
 
-void d3d11_render_backend::create_blend_state(render_blend_mode blend_mode,ID3D11BlendState** out_blend_state){
+		switch (desc.cull_mode) {
+		case render_cull_mode::none:
+			rasterizer_desc.CullMode = D3D11_CULL_NONE;
+			break;
+		case render_cull_mode::front:
+			rasterizer_desc.CullMode = D3D11_CULL_BACK;
+			break;
+		case render_cull_mode::back:
+			rasterizer_desc.CullMode = D3D11_CULL_FRONT;
+			break;
+		}
+
+		rasterizer_desc.FrontCounterClockwise = desc.front_counter_clockwise;
+
+		rasterizer_desc.DepthClipEnable = TRUE;
+
+		device_->CreateRasterizerState(&rasterizer_desc, &pipeline.rasterizer_state);
+		//rasterizer
+
+		//depth state
+		D3D11_DEPTH_STENCIL_DESC depth_desc{};
+
+		depth_desc.DepthEnable = desc.depth_test_enabled;
+
+		depth_desc.DepthWriteMask = desc.depth_write_enabled ? D3D11_DEPTH_WRITE_MASK_ALL : D3D10_DEPTH_WRITE_MASK_ZERO;
+
+		switch (desc.depth_compare) {
+		case render_compare_operation::less:
+			depth_desc.DepthFunc = D3D11_COMPARISON_LESS;
+			break;
+		case render_compare_operation::less_equal:
+			depth_desc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+			break;
+		case render_compare_operation::always:
+			depth_desc.DepthFunc = D3D11_COMPARISON_ALWAYS;
+			break;
+		}
+
+		device_->CreateDepthStencilState(&depth_desc, &pipeline.depth_stencil_state);
+
+
+
+		rain::log_info("D3D11 pipeline state created");
+
+		return pipeline_states_.create(std::move(pipeline));
+	}
+
+	void d3d11_render_backend::create_blend_state(render_blend_mode blend_mode,ID3D11BlendState** out_blend_state){
 		rain_assert(out_blend_state != nullptr);
 		D3D11_BLEND_DESC blend_desc{};
 
@@ -584,7 +633,7 @@ void d3d11_render_backend::create_blend_state(render_blend_mode blend_mode,ID3D1
 
 			break;
 		}
-		
+
 		const HRESULT result = device_->CreateBlendState(&blend_desc, out_blend_state);
 
 		rain_assert(!failed(result));
@@ -593,42 +642,47 @@ void d3d11_render_backend::create_blend_state(render_blend_mode blend_mode,ID3D1
 
 
 	void d3d11_render_backend::set_pipeline_state(
-        pipeline_state_handle handle) {
-        d3d11_pipeline_state* pipeline = pipeline_states_.try_get(handle);
-        if (pipeline == nullptr) {
-            return;
-        }
+		pipeline_state_handle handle) {
+		d3d11_pipeline_state* pipeline = pipeline_states_.try_get(handle);
+		if (pipeline == nullptr) {
+			return;
+		}
 
-        d3d11_shader_program* shader_program =
-            shader_programs_.try_get(pipeline->shader);
-        if (shader_program == nullptr) {
-            return;
-        }
+		d3d11_shader_program* shader_program =
+			shader_programs_.try_get(pipeline->shader);
+		if (shader_program == nullptr) {
+			return;
+		}
 
-        device_context_->IASetInputLayout(pipeline->input_layout);
-        device_context_->IASetPrimitiveTopology(
-            to_d3d_topology(pipeline->topology)
-        );
-        device_context_->VSSetShader(
-            shader_program->vertex_shader,
-            nullptr,
-            0
-        );
-        device_context_->PSSetShader(
-            shader_program->pixel_shader,
-            nullptr,
-            0
-        );
+		device_context_->IASetInputLayout(pipeline->input_layout);
+		device_context_->IASetPrimitiveTopology(
+			to_d3d_topology(pipeline->topology)
+		);
+		device_context_->VSSetShader(
+			shader_program->vertex_shader,
+			nullptr,
+			0
+		);
+		device_context_->PSSetShader(
+			shader_program->pixel_shader,
+			nullptr,
+			0
+		);
 
-        constexpr float blend_factor[4]{0.0f, 0.0f, 0.0f, 0.0f};
-        device_context_->OMSetBlendState(
-            pipeline->blend_state,
-            blend_factor,
-            0xffffffff
-        );
-    }
+		constexpr float blend_factor[4]{0.0f, 0.0f, 0.0f, 0.0f};
 
-void d3d11_render_backend::set_vertex_buffer(
+		device_context_->RSSetState(pipeline->rasterizer_state);
+
+		device_context_->OMSetDepthStencilState(pipeline->depth_stencil_state,0);
+
+		device_context_->OMSetBlendState(
+			pipeline->blend_state,
+			blend_factor,
+			0xffffffff
+		);
+	}
+
+	void d3d11_render_backend::set_vertex_buffer(
         render_buffer_handle handle) {
         d3d11_render_buffer* buffer = buffers_.try_get(handle);
         if (buffer == nullptr || buffer->buffer == nullptr) {
@@ -647,7 +701,7 @@ void d3d11_render_backend::set_vertex_buffer(
         );
     }
 
-void d3d11_render_backend::draw(u32 vertex_count, u32 start_vertex){
+	void d3d11_render_backend::draw(u32 vertex_count, u32 start_vertex){
 		device_context_->Draw(
 			static_cast<UINT>(vertex_count),
 			static_cast<UINT>(start_vertex)
@@ -668,13 +722,22 @@ void d3d11_render_backend::draw(u32 vertex_count, u32 start_vertex){
 		create_render_target_view();
 		create_default_sampler();
 		create_debug_triangle_resources();
+		create_depth_stencil();
 		set_viewport();
 
 		rain::log_info("d3d11 render init");
 	}
 
 	void d3d11_render_backend::shutdown() {
+		if (device_context_ != nullptr) {
+			device_context_->ClearState();
+			device_context_->Flush();
+		}
+
+		flush_resource_destruction();
+
 		release_render_resources();
+
 
 		release_com(render_target_view_);
 		release_com(swap_chain_);
@@ -689,6 +752,8 @@ void d3d11_render_backend::draw(u32 vertex_count, u32 start_vertex){
         pipeline_states_.release_all([](d3d11_pipeline_state& pipeline) {
             release_com(pipeline.blend_state);
             release_com(pipeline.input_layout);
+			release_com(pipeline.rasterizer_state);
+			release_com(pipeline.depth_stencil_state);
         });
 
         buffers_.release_all([](d3d11_render_buffer& buffer) {
@@ -708,7 +773,7 @@ void d3d11_render_backend::draw(u32 vertex_count, u32 start_vertex){
         });
     }
 
-void d3d11_render_backend::create_default_sampler() {
+	void d3d11_render_backend::create_default_sampler() {
 		D3D11_SAMPLER_DESC desc{};
 		desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
 		desc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
@@ -786,7 +851,7 @@ void d3d11_render_backend::create_default_sampler() {
 
 		rain_assert(!failed(create_srv_result));
 		rain_assert(texture.shader_resource_view != nullptr);
-		
+
 
 		rain::log_info("D3D11 texture created");
 
@@ -819,7 +884,7 @@ void d3d11_render_backend::create_default_sampler() {
         }
     }
 
-void d3d11_render_backend::create_device() {
+	void d3d11_render_backend::create_device() {
 		UINT create_device_flags = 0;
 #if defined(_DEBUG)
 		create_device_flags |= D3D11_CREATE_DEVICE_DEBUG;
@@ -881,7 +946,7 @@ void d3d11_render_backend::create_device() {
 
 		desc.SampleDesc.Count = 1;
 		desc.SampleDesc.Quality = 0;
-		
+
 		desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 		desc.BufferCount = 1;
 
@@ -1047,6 +1112,78 @@ void d3d11_render_backend::create_device() {
 		viewport.MaxDepth = 1.0f;
 
 		device_context_->RSSetViewports(1, &viewport);
+	}
+
+	void d3d11_render_backend::create_depth_stencil() {
+		release_com(depth_stencil_view_);
+		release_com(depth_texture_);
+
+		D3D11_TEXTURE2D_DESC texture_desc{};
+
+		texture_desc.Width = width_;
+		texture_desc.Height = height_;
+		texture_desc.MipLevels = 1;
+		texture_desc.ArraySize = 1;
+		texture_desc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+
+		texture_desc.SampleDesc.Count = 1;
+		texture_desc.Usage = D3D11_USAGE_DEFAULT;
+		texture_desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+
+		HERSULT result = device_->CreateTexture2D(&texture_desc,nullptr,&depth_texture_);
+
+		rain_assert(!failed(result));
+
+		D3D11_DEPTH_STENCIL_VIEW_DESC view_desc{};
+		view_desc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+
+		view_desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+
+		result = device_->CreateDepthStencilView(depth_texture_,&view_desc,&depth_stencil_view_);
+
+		rain_assert(!failed(result));
+
+		device_context_->OMSetRenderTargets(1, &render_target_view_,depth_stencil_view_);
+	}
+
+	void d3d11_render_backend::clear_depth(f32 depth)override {
+		if (depth_stencil_view == nullptr) {
+			return;
+		}
+
+		device_context_->ClearDepthStencilView(depth_stencil_view_, D3D11_CLEAR_DEPTH, D3D11_CLEAR_STENCIL.depth, 0);
+	}
+
+	void d3d11_render_backend::set_index_buffer(render_buffer_handle handle, render_index_format format)override {
+		d3d11_render_buffer* buffer = buffers_.try_get(handle);
+
+		if (buffer == nullptr)return;
+
+		const DXGI_FORMAT native_format = format == render_index_foramt::uint16 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
+
+		device_context_->IASetIndexBuffer(buffer->buffer,native_format,0);
+	}
+
+	void d3d11_render_backend::set_constant_buffer(render_buffer_handle handle, u32 slot)override {
+		d3d11_render_buffer* buffer = buffers_.try_get(handle);
+
+		if (buffer == nullptr)return;
+
+		device_context_->VSSetConstantBuffers(slot, 1, &buffer->buffer);
+
+	}
+
+	void d3d11_render_backend::set_pixel_constant_buffer(render_buffer_handle handle,u32 slot)override{
+		d3d11_render_buffer* buffer = buffers_.try_get(handle);
+		if (buffer == nulptr)return;
+
+		device_context_->PSSetConstantBufffers(slot,1m&buffer->buffer);
+
+	}
+
+	void d3d11_render_backend::draw_indexed(u32 index_count, u32 start_index, i32 base_vertex)override {
+		device_context_->DrawIndexed(index_count,start_index,base_vertex);
+	
 	}
 
 	std::unique_ptr<render_backend>create_d3d11_render_backend(rain_window& target_window) {

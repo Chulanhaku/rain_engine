@@ -24,9 +24,20 @@ namespace rain {
 
 	};
 
+	struct mesh_3d_handle_tag {
+
+	};
+
+	struct material_3d_handle_tag{
+	
+	};
+
 	using shader_program_handle = handle<shader_program_handle_tag>;
 	using render_buffer_handle = handle<render_buffer_handle_tag>;
 	using pipeline_state_handle = handle<pipeline_state_handle_tag>;
 	using texture_2d_handle = handle<texture_2d_handle_tag>;
 	using material_2d_handle = handle<material_2d_handle_tag>;
+	using mesh_3d_handle = handle<mesh_3d_handle_tag>;
+	using material_3d_handle = handle<material_3d_handle_tag>;
+
 }

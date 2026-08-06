@@ -82,6 +82,8 @@ namespace rain {
 		
 		material_2d_registry materials_;
 		std::unique_ptr<texture_asset_registry>assets_;
+		std::unique_ptr<mesh_3d_registry>meshes_3d_;
+		std::unique_ptr<material_3d_registry>material_3d_;
 
 		render_clear_color  clear_color_{};
 

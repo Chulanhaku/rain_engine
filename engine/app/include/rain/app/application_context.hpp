@@ -19,6 +19,8 @@ namespace rain {
 		render_backend* renderer = nullptr;
 		texture_asset_registry* assets = nullptr;
 		material_2d_registry* materials = nullptr;
+		mesh_3d_registry* meshes_3d = nullptr;
+		material_3d_registry* materials_3d = nullptr;
 
 		f32 delta_seconds = 0.0f;
 		u64 frame_index = 0;

@@ -156,6 +156,19 @@ float4 main(pixel_input input) : SV_TARGET
         );
     }
 
+
+    sprite_renderer_2d::~sprite_renderer_2d() {
+        if (backend_ == nullptr)return;
+
+        backend_->destroy_pipeline_state(opaque_pipeline_);
+        backend_->destroy_pipeline_state(alpha_pipeline_);
+        backend_->destroy_pipeline_state(additive_pipeline_);
+        backend_->destroy_render_buffer(vertex_buffer_);
+        backend_->destroy_shader_program(shader_);
+        backend_->destroy_texture_2d(default_white_texture_);
+    }
+
+
     void sprite_renderer_2d::end()
     {
         flush();
@@ -250,6 +263,10 @@ float4 main(pixel_input input) : SV_TARGET
     {
         if (!texture.is_valid())
         {
+            return default_white_texture_;;
+        }
+
+        if (!backend_->is_valid(texture)) {
             return default_white_texture_;
         }
 

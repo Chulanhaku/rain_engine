@@ -275,6 +275,19 @@ static void sample_bounce_system(rain::system_context& context, void* user_data)
 class sample_layer final : public rain::layer
 {
 public:
+    void on_detach(rain::application_context&context)override{
+        if (context.materials == nullptr) {
+            return;
+        }
+
+        context.materials->destroy(image_material_);
+
+        context.materials->destroy(solid_material_);
+
+        image_material_ = rain::material_2d_handle{};
+        solid_material_ = rain::material_2d_handle{};
+    }
+
     void on_attach(rain::application_context& context) override
     {
         bind_input_actions(*context.input);
@@ -334,7 +347,57 @@ public:
             .function = &sample_bounce_system,
             .user_data = nullptr
         });
-        
+
+        context.scheduler->add_system({
+            .system_name = "system.rotation_3d",
+            .owner_name = "runtime",
+            .phase = rain::system_phase::movement,
+            .priority = 0,
+            .enabled = true,
+
+            .entity_query = rain::entity_query_desc{
+                .required_components = {
+                    rain::get_type_id<
+                        rain::transform_3d_component
+                    >(),
+                    rain::get_type_id<
+                        rain::angular_velocity_3d_component
+                    >()
+                },
+
+                .required_tags = [] {
+                    rain::tag_query query;
+
+                    query.require_all(
+                        rain::tag_id{"object.rotatable"}
+                    );
+
+                    query.reject(
+                        rain::tag_id{"state.frozen"}
+                    );
+
+                    return query;
+                }(),
+
+                .require_alive = true,
+                .require_active = true
+            },
+
+                .function = &rain::rotation_system_3d,
+                .user_data = nullptr
+        });
+
+        context.scheduler->add_system({
+            .system_name = "system.render_prepare_3d",
+            .owner_name = "render",
+            .phase = rain::system_phase::render_prepare,
+            .priority = 10,
+            .enabled = true,
+            .entity_query = {},
+            .function = &rain::render_prepare_system_3d,
+            .user_data = render_system_3d_.get()
+        });
+
         for (const rain::system_debug_info& info : context.scheduler->debug_infos())
         {
             char message[256]{};
@@ -354,19 +417,44 @@ public:
             rain::log_info(message);
         }
 
+        cube_mesh_ =
+            context.meshes_3d->create_cube();
+
+        const rain::texture_2d_handle texture =
+            context.assets->load_texture_2d(
+                "assets/textures/test.jpg"
+            );
+
+        cube_material_ =
+            context.materials_3d->create(
+                rain::material_3d_desc{
+                    .name = "material.cube",
+                    .albedo_texture = texture,
+                    .base_color = {
+                        1.0f,
+                        1.0f,
+                        1.0f,
+                        1.0f
+                    },
+                    .blend_mode =
+                        rain::render_blend_mode::opaque
+                }
+            );
+
+
         const rain::texture_2d_handle test_texture =
             context.assets->load_texture_2d(
                 "assets/textures/test.jpg"
             );
 
-        const rain::material_2d_handle solid_material =
+        solid_material_ =
             context.materials->create(rain::material_2d_desc{
                 .name = "material.solid_2d",
                 .texture = rain::texture_2d_handle{},
                 .blend_mode = rain::render_blend_mode::opaque
             });
 
-        const rain::material_2d_handle image_material =
+        image_material_ =
             context.materials->create(rain::material_2d_desc{
                 .name = "material.test_image",
                 .texture = test_texture,
@@ -378,6 +466,12 @@ public:
             *context.materials,
             4096
         );
+
+        render_system_3d_ = std::make_unique<rain::render_system_3d>(
+                *context.renderer,
+                *context.meshes_3d,
+                *context.materials_3d
+            );
 
         context.scheduler->add_system({
             .system_name = "system.render_prepare_2d",
@@ -396,8 +490,8 @@ public:
         world_handles_ = sample_2d::build_sample_2d_world(
             *context.target_world,
             sample_2d::sample_2d_world_materials{
-                .solid_material = solid_material,
-                .image_material = image_material
+                .solid_material = solid_material_,
+                .image_material = image_material_
             }
         );
     }
@@ -498,10 +592,18 @@ private:
     rain::string_id action_toggle_frozen_{"state.frozen"};
     rain::string_id action_toggle_hidden_{ "state.hidden" };
 
+
     std::unique_ptr<rain::render_system_2d> render_system_;
+    std::unique_ptr<rain::render_system_3d> render_system_3d_;
+    rain::material_2d_handle solid_material_;
+    rain::material_2d_handle image_material_;
 
     rain::camera_2d camera_;
     sample_2d::sample_2d_world_handles world_handles_;
+
+    rain::mesh_3d_handle cube_mesh_;
+    rain::material_3d_handle cube_material_;
+
 };
 
 int main()

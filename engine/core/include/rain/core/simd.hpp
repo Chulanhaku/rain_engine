@@ -147,6 +147,69 @@ namespace rain {
 #endif
 	}
 
+    inline f32 simd_dot3(simd_f32x4 lhs, simd_f32x4 rhs)
+    {
+#if RAIN_HAS_SSE
+        const __m128 multiplied = _mm_mul_ps(lhs.value, rhs.value);
+        const __m128 yzxw = _mm_shuffle_ps(
+            multiplied,
+            multiplied,
+            _MM_SHUFFLE(3, 0, 2, 1)
+        );
+        const __m128 zxyw = _mm_shuffle_ps(
+            multiplied,
+            multiplied,
+            _MM_SHUFFLE(3, 1, 0, 2)
+        );
+        const __m128 result = _mm_add_ps(
+            _mm_add_ps(multiplied, yzxw),
+            zxyw
+        );
+        return _mm_cvtss_f32(result);
+#else
+        return lhs.x * rhs.x +
+            lhs.y * rhs.y +
+            lhs.z * rhs.z;
+#endif
+    }
 
+    inline simd_f32x4 simd_cross3(simd_f32x4 lhs, simd_f32x4 rhs)
+    {
+#if RAIN_HAS_SSE
+        const __m128 lhs_yzxw = _mm_shuffle_ps(
+            lhs.value,
+            lhs.value,
+            _MM_SHUFFLE(3, 0, 2, 1)
+        );
+        const __m128 lhs_zxyw = _mm_shuffle_ps(
+            lhs.value,
+            lhs.value,
+            _MM_SHUFFLE(3, 1, 0, 2)
+        );
+        const __m128 rhs_yzxw = _mm_shuffle_ps(
+            rhs.value,
+            rhs.value,
+            _MM_SHUFFLE(3, 0, 2, 1)
+        );
+        const __m128 rhs_zxyw = _mm_shuffle_ps(
+            rhs.value,
+            rhs.value,
+            _MM_SHUFFLE(3, 1, 0, 2)
+        );
 
+        return simd_f32x4(
+            _mm_sub_ps(
+                _mm_mul_ps(lhs_yzxw, rhs_zxyw),
+                _mm_mul_ps(lhs_zxyw, rhs_yzxw)
+            )
+        );
+#else
+        return simd_f32x4::set(
+            lhs.y * rhs.z - lhs.z * rhs.y,
+            lhs.z * rhs.x - lhs.x * rhs.z,
+            lhs.x * rhs.y - lhs.y * rhs.x,
+            0.0f
+        );
+#endif
+    }
 }

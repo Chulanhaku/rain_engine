@@ -21,12 +21,18 @@ namespace rain {
 	public:
 		explicit texture_asset_registry(render_backend& renderer);
 
+		~texture_asset_registry();
+
+
 		texture_asset_registry(const texture_asset_registry&) = delete;
 		texture_asset_registry&operator =(const texture_asset_registry&)=delete;
 
 		[[nodiscard]] texture_2d_handle load_texture_2d(const char* path);
 
 		[[nodiscard]] bool is_loaded(asset_id id)const;
+
+		bool unload_texture_2d(const char* path);
+		bool unload_texture_2d(asset_id id);
 
 		[[nodiscard]] texture_2d_handle find_texture(asset_id id)const;
 		[[nodiscard]] const std::vector<texture_asset_record>& records()const;

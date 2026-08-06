@@ -38,6 +38,8 @@ namespace rain {
 	public:
 		explicit sprite_renderer_2d(render_backend& backend, u32 max_quads = 1024);
 
+		~sprite_renderer_2d();
+
 		sprite_renderer_2d(const sprite_renderer_2d&) = delete;
 		sprite_renderer_2d& operator=(const sprite_renderer_2d&) = delete;
 

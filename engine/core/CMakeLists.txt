@@ -16,6 +16,8 @@ target_sources(rain_core
 
         include/rain/core/math/vec2.hpp
         include/rain/core/math/simd_vec2.hpp
+        include/rain/core/math/vec3.hpp
+        include/rain/core/math/simd_vec3.hpp
         include/rain/core/simd.hpp
 
         include/rain/core/container/rain_sparse_set.hpp

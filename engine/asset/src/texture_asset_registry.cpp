@@ -10,6 +10,10 @@ namespace rain {
     {
     }
 
+    texture_asset_registry::~texture_asset_registry() {
+        clear_cache();
+    }
+
     texture_2d_handle texture_asset_registry::load_texture_2d(const char* path) {
         if (path == nullptr) {
             rain::log_error("texture_asset_registry::failed path is null");
@@ -70,6 +74,38 @@ namespace rain {
         return texture != nullptr && texture->is_valid();
     }
 
+
+    bool texture_asset_registry::unload_texture_2d(const char* path) {
+        if (path == nullptr) {
+            return false;
+        }
+
+        return unload_texture_2d(asset_id{path});
+    }
+
+    bool texture_asset_registry::unload_texture_2d(asset_id id) {
+        texture_2d_handle* texture = texture_cache_.find(id);
+
+        if (texture == nullptr)return false;
+
+        const texture_2d_handle handle = *texture;
+
+        texture_cache_.erase(id);
+
+        for (texture_asset_record& record : records_) {
+            if (record.id != id) {
+                continue;
+            }
+
+            record.loaded = false;
+            record.handle = texture_2d_handle{};
+        }
+
+        if (!handle.is_valid())return true;
+
+        return renderer_->destroy_texture_2d(handle);
+    }
+
     texture_2d_handle texture_asset_registry::find_texture(asset_id id)const {
         const texture_2d_handle* texture = texture_cache_.find(id);
 
@@ -85,6 +121,16 @@ namespace rain {
     }
 
     void texture_asset_registry::clear_cache() {
+        if (renderer_ != nullptr) {
+            for (texture_asset_record& record : records_) {
+                if (!record.loaded)continue;
+                if (!record.handle.is_valid())continue;
+                renderer_->destroy_texture_2d(record.handle);
+                record.loaded = false;
+                record.handle = texture_2d_handle{};
+            }
+        }
+
         texture_cache_.clear();
         records_.clear();
 
