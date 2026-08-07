@@ -27,6 +27,8 @@ namespace rain {
 		}
 		layers_.clear();
 
+		materials_3d_.reset();
+		meshes_3d_.reset();
 		assets_.reset();
 		if (renderer_ != nullptr)renderer_->flush_resource_destruction();
 

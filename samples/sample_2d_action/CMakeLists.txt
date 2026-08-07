@@ -5,6 +5,8 @@ target_sources(sample_2d_action
         src/main.cpp
         src/sample_2d_world_builder.cpp
         src/sample_2d_world_builder.hpp
+        src/sample_3d_world_builder.cpp
+        src/sample_3d_world_builder.hpp
 )
 
 target_link_libraries(sample_2d_action

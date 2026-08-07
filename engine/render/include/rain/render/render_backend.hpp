@@ -6,14 +6,7 @@
 #include<rain/render/render_handles.hpp>
 
 namespace rain {
-
-	enum class render_buffer_bind :u8 {
-		vertex_buffer,
-		index_buffer,
-		constant_buffer
-	};
-
-	class render_backend {
+class render_backend {
 	public:
 		virtual~render_backend() = default;
 		virtual void begin_frame() = 0;
@@ -66,6 +59,7 @@ namespace rain {
 		virtual void set_index_buffer(render_buffer_handle handle, render_index_format format) = 0;
 		virtual void set_vertex_buffer(render_buffer_handle handle, u32 slot) = 0;
 
+		virtual void set_vertex_constant_buffer(render_buffer_handle handle, u32 slot) = 0;
 		virtual void set_pixel_constant_buffer(render_buffer_handle handle, u32 slot) = 0;
 		virtual void draw_indexed(u32 index_count,u32 start_index,i32 base_vertex)=0;
 	};

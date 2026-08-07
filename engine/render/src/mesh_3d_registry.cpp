@@ -1,9 +1,7 @@
 #include<rain/render/mesh_3d_registry.hpp>
 
 namespace rain {
-	mesh_3d_registry::mesh_3d_registry(render_backend& backend) {
-
-	}
+	mesh_3d_registry::mesh_3d_registry(render_backend& backend) : backend_(&backend) {}
 
 	mesh_3d_registry::~mesh_3d_registry() {
 
@@ -17,7 +15,7 @@ namespace rain {
 		const render_buffer_handle vertex_buffer = backend_->create_vertex_buffer(render_buffer_desc{
 			.name = desc.name + ".vertices",
 			.bind = render_buffer_bind::vertex_buffer,
-			.usage = render_buffer_usage::default_usage,
+			.usage = render_buffer_usage::immutable,
 			.size_bytes = desc.vertices.size_bytes(),
 			.stride_bytes = sizeof(mesh_vertex_3d),
 			.initial_data = desc.vertices.data()
@@ -27,8 +25,8 @@ namespace rain {
 		const render_buffer_handle index_buffer = backend_->create_index_buffer(render_buffer_desc{
 			.name = desc.name + ".indices",
 			.bind = render_buffer_bind::index_buffer,
-			.usage = render_buffer_usage::default_usage,
-			.size_bytes = desc.indices.zie_bytes(),
+			.usage = render_buffer_usage::immutable,
+			.size_bytes = desc.indices.size_bytes(),
 			.stride_bytes = sizeof(u32),
 			.initial_data = desc.indices.data()
 			}
@@ -39,12 +37,12 @@ namespace rain {
 			.name = desc.name,
 			.vertex_buffer = vertex_buffer,
 			.index_buffer = index_buffer,
-			.index_count = static_cast<u32>(desc.indices.size());
+			.index_count = static_cast<u32>(desc.indices.size())
 			}
 		);
 	}
 
-	bool mesh_3d_registry::destory(mesh_3d_handle handle){
+	bool mesh_3d_registry::destroy(mesh_3d_handle handle){
 		mesh_3d* mesh = meshes_.try_get(handle);
 
 		if (mesh == nullptr) {
@@ -59,9 +57,7 @@ namespace rain {
 	}
 
 
-	mesh_3d* mesh_3d_registry::try_get(mesh_3d_handle handle) {
-
-	}
+	mesh_3d* mesh_3d_registry::try_get(mesh_3d_handle handle) { return meshes_.try_get(handle); }
 
 	mesh_3d_handle mesh_3d_registry::create_cube(){
 		static constexpr mesh_vertex_3d vertices[] = {

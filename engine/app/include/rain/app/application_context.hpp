@@ -9,6 +9,8 @@
 #include<rain/platform/input_action.hpp>
 #include<rain/asset/texture_asset_registry.hpp>
 #include<rain/render/material_2d_registry.hpp>
+#include <rain/render/mesh_3d_registry.hpp>
+#include <rain/render/material_3d_registry.hpp>
 
 namespace rain {
 	struct application_context {

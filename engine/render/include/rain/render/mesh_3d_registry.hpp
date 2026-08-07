@@ -13,14 +13,14 @@ namespace rain {
 
 		[[nodiscard]] mesh_3d_handle create(const mesh_3d_desc& desc);
 
-		bool destory(mesh_3d_handle handle);
+		bool destroy(mesh_3d_handle handle);
 
 		[[nodiscard]] mesh_3d* try_get(mesh_3d_handle handle);
 
 		[[nodiscard]] mesh_3d_handle create_cube();
 
 	private:
-		render_backend* backend  = nullptr;
+		render_backend* backend_ = nullptr;
 		handle_pool<mesh_3d_handle_tag,mesh_3d>meshes_;
 	};
 }

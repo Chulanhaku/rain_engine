@@ -5,6 +5,7 @@ target_sources(rain_runtime
         src/entity.cpp
         src/world.cpp
         src/movement_system_2d.cpp
+        src/rotation_system_3d.cpp
         #src/component_storage.cpp
         #src/scene.cpp
     PUBLIC
@@ -17,6 +18,9 @@ target_sources(rain_runtime
         include/rain/runtime/velocity_2d_component.hpp
         include/rain/runtime/movement_system_2d.hpp
         include/rain/runtime/tag_component.hpp
+        include/rain/runtime/transform_3d_component.hpp
+        include/rain/runtime/angular_velocity_3d_component.hpp
+        include/rain/runtime/rotation_system_3d.hpp
         include/rain/runtime/entity_query.hpp    
 )
 

@@ -8,7 +8,7 @@
 
 namespace rain {
 	struct render_command_3d {
-		entity_id source_enity;
+		entity_id source_entity;
 
 		mat4 world_matrix;
 
@@ -20,7 +20,7 @@ namespace rain {
 			1.0f,1.0f,1.0f,1.0f
 		};
 
-		f32 camera_dsitance_squared = 0.0f;
+		f32 camera_distance_squared = 0.0f;
 
 		i32 layer = 0;
 		u64 submission_index = 0;

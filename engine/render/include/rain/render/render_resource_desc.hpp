@@ -46,7 +46,8 @@ namespace rain {
 
 	enum class render_buffer_bind {
 		vertex_buffer,
-		index_buffer
+		index_buffer,
+		constant_buffer
 	};
 
 	struct render_buffer_desc {

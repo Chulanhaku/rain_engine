@@ -10,7 +10,7 @@ namespace rain {
 		vec3 scale{ 1.0f,1.0f,1.0f };
 
 		[[nodiscard]] mat4 matrix()const {
-			return make_transform(position,rotation,scale)
+			return make_transform(position, rotation, scale);
 		}
 	};
 }

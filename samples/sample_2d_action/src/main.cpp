@@ -215,6 +215,7 @@
 
 
 #include "sample_2d_world_builder.hpp"
+#include "sample_3d_world_builder.hpp"
 
 #include <rain/app/application.hpp>
 #include <rain/app/layer.hpp>
@@ -224,6 +225,10 @@
 #include <rain/render/camera_2d.hpp>
 #include <rain/render/render_clear_color.hpp>
 #include <rain/render/render_system_2d.hpp>
+#include <rain/render/render_system_3d.hpp>
+#include <rain/runtime/angular_velocity_3d_component.hpp>
+#include <rain/runtime/rotation_system_3d.hpp>
+#include <rain/runtime/transform_3d_component.hpp>
 #include <rain/render/sprite_2d_component.hpp>
 #include <rain/runtime/movement_system_2d.hpp>
 #include <rain/runtime/transform_2d_component.hpp>
@@ -275,7 +280,10 @@ static void sample_bounce_system(rain::system_context& context, void* user_data)
 class sample_layer final : public rain::layer
 {
 public:
-    void on_detach(rain::application_context&context)override{
+    void on_detach(rain::application_context& context) override {
+        render_system_3d_.reset();
+        render_system_.reset();
+
         if (context.materials == nullptr) {
             return;
         }
@@ -286,6 +294,15 @@ public:
 
         image_material_ = rain::material_2d_handle{};
         solid_material_ = rain::material_2d_handle{};
+
+        if (context.materials_3d != nullptr) {
+            context.materials_3d->destroy(cube_material_);
+            cube_material_ = {};
+        }
+        if (context.meshes_3d != nullptr) {
+            context.meshes_3d->destroy(cube_mesh_);
+            cube_mesh_ = {};
+        }
     }
 
     void on_attach(rain::application_context& context) override
@@ -298,6 +315,9 @@ public:
             .viewport_height = static_cast<rain::f32>(context.renderer->height()),
             .zoom = 1.0f
         });
+
+        render_system_3d_ = std::make_unique<rain::render_system_3d>(
+            *context.renderer, *context.meshes_3d, *context.materials_3d);
 
         context.scheduler->add_system({
             .system_name = "system.movement_2d",
@@ -467,11 +487,6 @@ public:
             4096
         );
 
-        render_system_3d_ = std::make_unique<rain::render_system_3d>(
-                *context.renderer,
-                *context.meshes_3d,
-                *context.materials_3d
-            );
 
         context.scheduler->add_system({
             .system_name = "system.render_prepare_2d",
@@ -492,6 +507,14 @@ public:
             sample_2d::sample_2d_world_materials{
                 .solid_material = solid_material_,
                 .image_material = image_material_
+            }
+        );
+
+        world_handles_3d_ = sample_3d::build_sample_3d_world(
+            *context.target_world,
+            sample_3d::sample_3d_world_resources{
+                .cube_mesh = cube_mesh_,
+                .cube_material = cube_material_
             }
         );
     }
@@ -527,6 +550,7 @@ public:
     void on_render(rain::application_context& context) override
     {
         (void)context;
+        render_system_3d_->submit();
         render_system_->submit(camera_);
     }
 
@@ -600,6 +624,7 @@ private:
 
     rain::camera_2d camera_;
     sample_2d::sample_2d_world_handles world_handles_;
+    sample_3d::sample_3d_world_handles world_handles_3d_;
 
     rain::mesh_3d_handle cube_mesh_;
     rain::material_3d_handle cube_material_;

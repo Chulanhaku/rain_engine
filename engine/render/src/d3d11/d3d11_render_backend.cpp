@@ -100,7 +100,9 @@ namespace rain {
 			case render_buffer_bind::vertex_buffer:
 				return D3D11_BIND_VERTEX_BUFFER;
 			case render_buffer_bind::index_buffer:
-				return D3D11_BIND_INDEX_BUFFER;
+                return D3D11_BIND_INDEX_BUFFER;
+            case render_buffer_bind::constant_buffer:
+                return D3D11_BIND_CONSTANT_BUFFER;
 			}
 
 			return 0;
@@ -285,7 +287,7 @@ float4 main(pixel_input input):SV_TARGET{
 	}
 
 	render_buffer_handle d3d11_render_backend::create_vertex_buffer(const render_buffer_desc& desc) {
-		rain_assert(desc.bind==render_buffer_bind::vertex_buffer);
+		
 		rain_assert(desc.size_bytes > 0);
 		rain_assert(desc.stride_bytes>0);
 
@@ -329,6 +331,14 @@ float4 main(pixel_input input):SV_TARGET{
 		rain::log_info("d3d11 buffer created");
 
 		return buffers_.create(std::move(buffer));
+	}
+
+	render_buffer_handle d3d11_render_backend::create_index_buffer(const render_buffer_desc& desc) {
+		return create_vertex_buffer(desc);
+	}
+
+	render_buffer_handle d3d11_render_backend::create_constant_buffer(const render_buffer_desc& desc) {
+		return create_vertex_buffer(desc);
 	}
 
 	bool d3d11_render_backend::destroy_shader_program(
@@ -574,7 +584,7 @@ float4 main(pixel_input input):SV_TARGET{
 
 		depth_desc.DepthEnable = desc.depth_test_enabled;
 
-		depth_desc.DepthWriteMask = desc.depth_write_enabled ? D3D11_DEPTH_WRITE_MASK_ALL : D3D10_DEPTH_WRITE_MASK_ZERO;
+		depth_desc.DepthWriteMask = desc.depth_write_enabled ? D3D11_DEPTH_WRITE_MASK_ALL : D3D11_DEPTH_WRITE_MASK_ZERO;
 
 		switch (desc.depth_compare) {
 		case render_compare_operation::less:
@@ -700,6 +710,14 @@ float4 main(pixel_input input):SV_TARGET{
             &offset
         );
     }
+
+	void d3d11_render_backend::set_vertex_buffer(render_buffer_handle handle, u32 slot) {
+		d3d11_render_buffer* buffer = buffers_.try_get(handle);
+		if (buffer == nullptr || buffer->buffer == nullptr) return;
+		const UINT stride = buffer->stride_bytes;
+		constexpr UINT offset = 0;
+		device_context_->IASetVertexBuffers(slot, 1, &buffer->buffer, &stride, &offset);
+	}
 
 	void d3d11_render_backend::draw(u32 vertex_count, u32 start_vertex){
 		device_context_->Draw(
@@ -863,6 +881,8 @@ float4 main(pixel_input input):SV_TARGET{
         u32 slot) {
         d3d11_texture_2d* texture = textures_.try_get(handle);
         if (texture == nullptr || texture->shader_resource_view == nullptr) {
+            ID3D11ShaderResourceView* null_view = nullptr;
+            device_context_->PSSetShaderResources(static_cast<UINT>(slot), 1, &null_view);
             return;
         }
 
@@ -1130,7 +1150,7 @@ float4 main(pixel_input input):SV_TARGET{
 		texture_desc.Usage = D3D11_USAGE_DEFAULT;
 		texture_desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
 
-		HERSULT result = device_->CreateTexture2D(&texture_desc,nullptr,&depth_texture_);
+		HRESULT result = device_->CreateTexture2D(&texture_desc,nullptr,&depth_texture_);
 
 		rain_assert(!failed(result));
 
@@ -1146,25 +1166,25 @@ float4 main(pixel_input input):SV_TARGET{
 		device_context_->OMSetRenderTargets(1, &render_target_view_,depth_stencil_view_);
 	}
 
-	void d3d11_render_backend::clear_depth(f32 depth)override {
-		if (depth_stencil_view == nullptr) {
+	void d3d11_render_backend::clear_depth(f32 depth) {
+		if (depth_stencil_view_ == nullptr) {
 			return;
 		}
 
-		device_context_->ClearDepthStencilView(depth_stencil_view_, D3D11_CLEAR_DEPTH, D3D11_CLEAR_STENCIL.depth, 0);
+		device_context_->ClearDepthStencilView(depth_stencil_view_, D3D11_CLEAR_DEPTH, depth, 0);
 	}
 
-	void d3d11_render_backend::set_index_buffer(render_buffer_handle handle, render_index_format format)override {
+	void d3d11_render_backend::set_index_buffer(render_buffer_handle handle, render_index_format format) {
 		d3d11_render_buffer* buffer = buffers_.try_get(handle);
 
 		if (buffer == nullptr)return;
 
-		const DXGI_FORMAT native_format = format == render_index_foramt::uint16 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
+		const DXGI_FORMAT native_format = format == render_index_format::uint16 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
 
 		device_context_->IASetIndexBuffer(buffer->buffer,native_format,0);
 	}
 
-	void d3d11_render_backend::set_constant_buffer(render_buffer_handle handle, u32 slot)override {
+	void d3d11_render_backend::set_vertex_constant_buffer(render_buffer_handle handle, u32 slot) {
 		d3d11_render_buffer* buffer = buffers_.try_get(handle);
 
 		if (buffer == nullptr)return;
@@ -1173,15 +1193,15 @@ float4 main(pixel_input input):SV_TARGET{
 
 	}
 
-	void d3d11_render_backend::set_pixel_constant_buffer(render_buffer_handle handle,u32 slot)override{
+	void d3d11_render_backend::set_pixel_constant_buffer(render_buffer_handle handle, u32 slot){
 		d3d11_render_buffer* buffer = buffers_.try_get(handle);
-		if (buffer == nulptr)return;
+		if (buffer == nullptr)return;
 
-		device_context_->PSSetConstantBufffers(slot,1m&buffer->buffer);
+		device_context_->PSSetConstantBuffers(slot, 1, &buffer->buffer);
 
 	}
 
-	void d3d11_render_backend::draw_indexed(u32 index_count, u32 start_index, i32 base_vertex)override {
+	void d3d11_render_backend::draw_indexed(u32 index_count, u32 start_index, i32 base_vertex) {
 		device_context_->DrawIndexed(index_count,start_index,base_vertex);
 	
 	}

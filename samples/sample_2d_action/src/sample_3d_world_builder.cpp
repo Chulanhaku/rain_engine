@@ -1,7 +1,7 @@
 #include "sample_3d_world_builder.hpp"
 
 #include <rain/core/tag/tag.hpp>
-#include <rain/render/camera_3d_component.hpp>
+#include <rain/render/camera_3d.hpp>
 #include <rain/render/directional_light_3d_component.hpp>
 #include <rain/render/mesh_3d_component.hpp>
 #include <rain/runtime/angular_velocity_3d_component.hpp>

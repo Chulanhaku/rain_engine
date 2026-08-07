@@ -15,5 +15,5 @@ namespace sample_3d {
 		rain::entity_id directional_light;
 	};
 
-	[[nodiscard]] sample_3d_world_handles build_sample_3d_world(rain:;world&target_world,const sample_3d_world_resources&resources);
+	[[nodiscard]] sample_3d_world_handles build_sample_3d_world(rain::world& target_world, const sample_3d_world_resources& resources);
 }

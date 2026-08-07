@@ -1,0 +1,7 @@
+#pragma once
+
+namespace rain::detail {
+    inline constexpr char mesh_3d_shader_source[] = R"RAIN3D(
+@RAIN_MESH_3D_SHADER_SOURCE@
+)RAIN3D";
+}

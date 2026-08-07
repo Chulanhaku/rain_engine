@@ -19,8 +19,9 @@ namespace rain {
 
 			return result;
 		}
+	};
 
-		[[nodiscard]] inline mat4 operator*(const mat4& lhs, const mat4& rhs) {
+	[[nodiscard]] inline mat4 operator*(const mat4& lhs, const mat4& rhs) {
 			mat4 result{};
 
 			for (u32 row = 0; row < 4; ++row) {
@@ -57,7 +58,7 @@ namespace rain {
 
 		[[nodiscard]] inline mat4 make_rotation_x(f32 radians) {
 			const f32 cosine = std::cos(radians);
-			const f32 sine = std:; sin(radians);
+			const f32 sine = std::sin(radians);
 
 			mat4 result = mat4::identity();
 
@@ -103,7 +104,7 @@ namespace rain {
 			return make_scale(scale) * make_rotation_x(rotation.x) * make_rotation_y(rotation.y) * make_rotation_z(rotation.z) * make_translation(position);
 		}
 
-		[[nodiscard]] inline mat4 make_perpective_for_lh(f32 vertical_fov_radians,f32 aspect_ratio,f32 near_plane,f32 far_plane) {
+		[[nodiscard]] inline mat4 make_perspective_fov_lh(f32 vertical_fov_radians,f32 aspect_ratio,f32 near_plane,f32 far_plane) {
 			const f32 y_scale = 1.0f / std::tan(vertical_fov_radians * 0.5f);
 
 			const f32 x_scale = y_scale / aspect_ratio;
@@ -121,7 +122,7 @@ namespace rain {
 
 		[[nodiscard]] inline mat4 make_look_at_lh(vec3 eye, vec3 target, vec3 up) {
 			const vec3 forward = normalize(target - eye);
-			const vec3 right = normalize(cross(forward, right));
+			const vec3 right = normalize(cross(up, forward));
 			const vec3 corrected_up = cross(forward, right);
 
 			mat4 result = mat4::identity();
@@ -151,5 +152,4 @@ namespace rain {
 
 			return normalize(vec3{ .x = std::sin(rotation.y) * pitch_cosine,.y = std::sin(rotation.x),.z = std::cos(rotation.y) * pitch_cosine });
 		}
-	};
 }

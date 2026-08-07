@@ -8,7 +8,7 @@ cbuffer SceneConstant : register(b1)
 {
     float4 light_direction;
     float4 light_color;
-    float4 ambient_clor;
+    float4 ambient_color;
     float4 camera_position;
 }
 
@@ -73,7 +73,7 @@ float4 pixel_main(VertexOutput input) : SV_Target{
     
     const float diffuse_factor = saturate(dot(normal, incoming_light));
     
-    const float3 lighting = ambient_clor.rgb + light_color.rgb * diffuse_factor;
+    const float3 lighting = ambient_color.rgb + light_color.rgb * diffuse_factor;
     
     const float4 result = texture_color * base_color;
     

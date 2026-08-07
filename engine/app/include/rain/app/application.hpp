@@ -10,6 +10,8 @@
 #include<rain/render/render_clear_color.hpp>
 #include<rain/render/d3d11/d3d11_render_backend.hpp>
 #include<rain/asset/texture_asset_registry.hpp>
+#include <rain/render/mesh_3d_registry.hpp>
+#include <rain/render/material_3d_registry.hpp>
 
 #include<memory>
 #include<string>
@@ -83,7 +85,7 @@ namespace rain {
 		material_2d_registry materials_;
 		std::unique_ptr<texture_asset_registry>assets_;
 		std::unique_ptr<mesh_3d_registry>meshes_3d_;
-		std::unique_ptr<material_3d_registry>material_3d_;
+		std::unique_ptr<material_3d_registry>materials_3d_;
 
 		render_clear_color  clear_color_{};
 

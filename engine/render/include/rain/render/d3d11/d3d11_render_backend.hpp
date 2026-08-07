@@ -238,7 +238,13 @@
 		render_buffer_handle create_vertex_buffer(const render_buffer_desc& desc)override;
 		pipeline_state_handle create_pipeline_state(const pipeline_state_desc& desc)override;
 		void set_pipeline_state(pipeline_state_handle handle)override;
-		void set_vertex_buffer(render_buffer_handle handle)override;
+		void set_vertex_buffer(render_buffer_handle handle) override;
+		void set_vertex_buffer(render_buffer_handle handle, u32 slot) override;
+		render_buffer_handle create_index_buffer(const render_buffer_desc& desc) override;
+		render_buffer_handle create_constant_buffer(const render_buffer_desc& desc) override;
+		void set_index_buffer(render_buffer_handle handle, render_index_format format) override;
+		void set_vertex_constant_buffer(render_buffer_handle handle, u32 slot) override;
+		void set_pixel_constant_buffer(render_buffer_handle handle, u32 slot) override;
 
 		void update_buffer(render_buffer_handle handle,const void* data,usize size_bytes);
 
@@ -258,7 +264,7 @@
 
 		void flush_resource_destruction() override;
 
-		void set_texture_2d(texture_2d_handle handle, u32 slot);
+		void set_texture_2d(texture_2d_handle handle, u32 slot) override;
 
 		void draw_indexed(u32 index_count, u32 start_index, i32 base_vertex)override;
 	private:

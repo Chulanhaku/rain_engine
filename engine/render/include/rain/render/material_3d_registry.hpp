@@ -12,7 +12,7 @@ namespace rain {
 
 		material_3d_handle create(const material_3d_desc& desc);
 
-		bool destory(material_3d_handle handle);
+		bool destroy(material_3d_handle handle);
 
 		material_3d* try_get(material_3d_handle handle);
 

@@ -18,7 +18,7 @@ namespace rain {
 		const entity_query_result entities = target_world.query_entities(*context.entity_query);
 
 		for (entity_id entity : entities) {
-			transform_3d_component& transform = target_world.get_component<tranform_3d_component>(entity);
+			transform_3d_component& transform = target_world.get_component<transform_3d_component>(entity);
 
 			const angular_velocity_3d_component& velocity = target_world.get_component<angular_velocity_3d_component>(entity);
 
