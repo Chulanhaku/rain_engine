@@ -4,6 +4,7 @@
 #include<rain/core/math/vec4.hpp>
 #include<rain/core/types.hpp>
 #include<rain/render/render_handles.hpp>
+#include <rain/render/render_types.hpp>
 #include<rain/runtime/entity.hpp>
 
 namespace rain {
@@ -24,5 +25,7 @@ namespace rain {
 
 		i32 layer = 0;
 		u64 submission_index = 0;
+        f32 camera_view_depth = 0.0f;
+        render_blend_mode blend_mode = render_blend_mode::opaque;
 	};
 }

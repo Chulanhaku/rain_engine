@@ -11,6 +11,7 @@
 
 #include <utility>
 #include <vector>
+#include<span>
 
 namespace rain
 {
@@ -61,7 +62,18 @@ namespace rain
         [[nodiscard]] bool has_component(entity_id entity, type_id component_type_id)const;
         [[nodiscard]] entity_query_result query_entities(const entity_query_desc& desc)const;
 
+        bool set_parent(entity_id child,entity_id parent);
 
+        bool clear_parent(entity_id child);
+
+        [[nodiscard]] entity_id parent_of(entity_id entity)const;
+        [[nodiscard]] std::span<const entity_id>children_of(entity_id entity)const;
+
+        [[nodiscard]] bool is_descendant(entity_id candidate, entity_id ancestor)const;
+
+        [[nodiscard]] bool has_tag_in_hierarchy(entity_id entity, tag_id tag, bool include_self = true)const;
+
+        [[nodiscard]] usize entity_capacity()const;
 
         template <typename component_type, typename... args_type>
         component_type& add_component(entity_id entity, args_type&&... args)
@@ -152,6 +164,11 @@ namespace rain
             bool alive = false;
         };
 
+        struct entity_hierarchy_record {
+            entity_id parent;
+            std::vector<entity_id>children;
+        };
+
     private:
         std::vector<entity_record>records_;
         std::vector<world_entity_meta>metadatas_;
@@ -160,5 +177,7 @@ namespace rain
         u32 living_count_ = 0;
 
         component_registry components_;
+
+        std::vector<entity_hierarchy_record>hierarchy_;
     };
 }

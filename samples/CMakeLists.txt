@@ -1,1 +1,2 @@
 add_subdirectory(sample_2d_action)
+add_subdirectory(sample_3d_pbr)

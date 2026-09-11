@@ -4,6 +4,7 @@
 #include<rain/core/math/vec3.hpp>
 #include<rain/core/types.hpp>
 #include<rain/render/render_handles.hpp>
+#include<rain/render/bounds_3d.hpp>
 
 #include<span>
 #include<string>
@@ -27,6 +28,8 @@ namespace rain {
 		render_buffer_handle vertex_buffer;
 		render_buffer_handle index_buffer;
 		u32 index_count = 0;
+
+		bounding_sphere_3d local_bounds;
 	};
 
 

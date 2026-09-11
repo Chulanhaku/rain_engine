@@ -1,4 +1,28 @@
 #include<rain/render/mesh_3d_registry.hpp>
+#include<algorithm>
+#include<cmath>
+
+namespace {
+    [[nodiscard]] rain::bounding_sphere_3d calculate_bounds(std::span<const rain::mesh_vertex_3d> vertices) {
+        using namespace rain;
+        if (vertices.empty()) return {};
+        vec3 minimum = vertices.front().position;
+        vec3 maximum = minimum;
+        for (const auto& vertex : vertices) {
+            minimum.x = std::min(minimum.x, vertex.position.x);
+            minimum.y = std::min(minimum.y, vertex.position.y);
+            minimum.z = std::min(minimum.z, vertex.position.z);
+            maximum.x = std::max(maximum.x, vertex.position.x);
+            maximum.y = std::max(maximum.y, vertex.position.y);
+            maximum.z = std::max(maximum.z, vertex.position.z);
+        }
+        const vec3 center = minimum * 0.5f + maximum * 0.5f;
+        f32 radius_squared = 0.0f;
+        for (const auto& vertex : vertices)
+            radius_squared = std::max(radius_squared, length_squared(vertex.position - center));
+        return {center, std::sqrt(radius_squared)};
+    }
+}
 
 namespace rain {
 	mesh_3d_registry::mesh_3d_registry(render_backend& backend) : backend_(&backend) {}
@@ -8,7 +32,14 @@ namespace rain {
 	}
 
 	mesh_3d_handle mesh_3d_registry::create(const mesh_3d_desc& desc) {
-		if (desc.vertices.empty() || desc.indices.empty()) {
+		if (desc.vertices.empty() || desc.indices.empty() ||
+            std::any_of(desc.indices.begin(), desc.indices.end(),
+                [&](u32 index) { return index >= desc.vertices.size(); }) ||
+            std::any_of(desc.vertices.begin(), desc.vertices.end(),
+                [](const mesh_vertex_3d& vertex) {
+                    return !std::isfinite(vertex.position.x) || !std::isfinite(vertex.position.y) ||
+                           !std::isfinite(vertex.position.z);
+                })) {
 			return {};
 		}
 
@@ -22,6 +53,8 @@ namespace rain {
 			}
 		);
 
+		if (!backend_->is_valid(vertex_buffer)) return {};
+
 		const render_buffer_handle index_buffer = backend_->create_index_buffer(render_buffer_desc{
 			.name = desc.name + ".indices",
 			.bind = render_buffer_bind::index_buffer,
@@ -33,11 +66,17 @@ namespace rain {
 		);
 
 
-		return meshes_.create(mesh_3d{
+        if (!backend_->is_valid(index_buffer)) {
+            backend_->destroy_render_buffer(vertex_buffer);
+            return {};
+        }
+
+        return meshes_.create(mesh_3d{
 			.name = desc.name,
 			.vertex_buffer = vertex_buffer,
 			.index_buffer = index_buffer,
-			.index_count = static_cast<u32>(desc.indices.size())
+			.index_count = static_cast<u32>(desc.indices.size()),
+			.local_bounds = calculate_bounds(desc.vertices)
 			}
 		);
 	}

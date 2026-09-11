@@ -6,6 +6,7 @@ target_sources(rain_runtime
         src/world.cpp
         src/movement_system_2d.cpp
         src/rotation_system_3d.cpp
+        src/transform_hierarchy_system_3d.cpp
         #src/component_storage.cpp
         #src/scene.cpp
     PUBLIC
@@ -22,6 +23,9 @@ target_sources(rain_runtime
         include/rain/runtime/angular_velocity_3d_component.hpp
         include/rain/runtime/rotation_system_3d.hpp
         include/rain/runtime/entity_query.hpp    
+        include/rain/runtime/local_matrix_3d_component.hpp
+        include/rain/runtime/world_transform_3d_component.hpp
+        include/rain/runtime/transform_hierarchy_system_3d.hpp
 )
 
 target_include_directories(rain_runtime

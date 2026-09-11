@@ -14,7 +14,8 @@ namespace rain {
 	};
 
 	enum class texture_format {
-		rgba8_unorm
+		rgba8_unorm,
+        rgba8_unorm_srgb
 	};
 
 	struct texture_2d_desc {
@@ -96,6 +97,8 @@ namespace rain {
 		bool depth_test_enabled = false;
 		bool depth_write_enabled = false;
 
-		render_compare_operation depth_compare = render_compare_operation::less_equal;
+        render_compare_operation depth_compare = render_compare_operation::less_equal;
+        // Linear shader output, hardware sRGB encode and linear-space blending.
+        bool srgb_write_enabled = false;
 	};
 }

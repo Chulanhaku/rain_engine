@@ -1,0 +1,144 @@
+## 代码变更汇总
+
+### 1. 修改文件列表
+
+- engine/asset/CMakeLists.txt
+- engine/asset/include/rain/asset/gltf_model_3d.hpp
+- engine/asset/src/gltf_model_3d.cpp
+- engine/core/include/rain/core/math/mat4.hpp
+- engine/render/src/render_system_3d.cpp
+- engine/runtime/include/rain/runtime/world.hpp
+- engine/runtime/include/rain/runtime/transform_hierarchy_system_3d.hpp
+- engine/runtime/src/transform_hierarchy_system_3d.cpp
+- engine/runtime/src/world.cpp
+- samples/sample_2d_action/src/main.cpp
+- samples/sample_2d_action/src/sample_3d_world_builder.cpp
+- docs/3D新增代码检查.txt
+- docs/修复3D层级与glTF导入.txt
+
+重命名文件：
+
+- engine/runtime/include/rain/runtime/tranform_hierarchy_system_3d.hpp
+  -> engine/runtime/include/rain/runtime/transform_hierarchy_system_3d.hpp
+
+### 2. 逐文件变更说明
+
+#### engine/asset/CMakeLists.txt
+- 修改目标：rain_asset。
+- 改动内容：将 rain_render 从 PRIVATE 依赖改为 PUBLIC 依赖，rain_core 保持实现侧 PRIVATE 依赖。
+- 修改原因：gltf_model_3d.hpp 和 texture_asset_registry.hpp 的公共接口直接暴露 render/runtime 类型，消费者需要获得传递 include/link 信息。
+- 影响范围：只链接 rain_asset 的调用方现在也能正确包含其公共头文件。
+
+#### engine/asset/include/rain/asset/gltf_model_3d.hpp
+- 修改数据结构：gltf_model_3d_instance。
+- 修改函数：instantiate_gltf_model_3d、destroy_gltf_model_3d。
+- 改动内容：统一 owned_meshes/owned_materials 命名；将加载和销毁声明移出实例结构体，改为 rain 命名空间自由函数；修复 nodiscard 和 instantiate 拼写。
+- 修改原因：原声明与 cpp 定义及 sample 调用方式不一致，会产生编译或链接错误。
+- 影响范围：调用方统一使用 rain::instantiate_gltf_model_3d 和 rain::destroy_gltf_model_3d。
+
+#### engine/asset/src/gltf_model_3d.cpp
+- 修改函数：convert_gltf_matrix_to_lh、find_attribute、import_primitive_mesh、import_material、resolve_material、instantiate_node、instantiate_gltf_model_3d、destroy_gltf_model_3d。
+- 改动内容：
+  - 修复 glTF 列主矩阵到引擎行向量左手矩阵的转换，Z 轴和层级变换可以正确转换。
+  - 修复 attribute index 比较、POSITION/NORMAL/TEXCOORD_0 accessor 读取和顶点字段拼写。
+  - 翻转三角形绕序以匹配左手坐标；模型缺少 NORMAL 时按三角形生成平滑法线。
+  - 修复 PBR metallic-roughness 字段访问、base color、alpha mode 和外部贴图路径转换。
+  - 建立材质缓存，记录 importer 拥有的 mesh/material 句柄，避免重复材质并支持完整释放。
+  - 正确创建 root、node、primitive entity，写入 local/world transform 组件、父子关系和 transform/render 标签。
+  - 将 printf 风格日志改为当前 log API 支持的单字符串消息。
+  - 将公共加载/销毁函数移出匿名命名空间，消除 API 链接问题。
+- 修改原因：原 importer 包含多处语法、类型、cgltf 字段和运行逻辑错误，矩阵甚至会被写成全零。
+- 影响范围：支持三角形 primitive、POSITION、可选 NORMAL/TEXCOORD_0、外部 URI base-color texture 和基础 alpha mode；暂不支持 embedded image、skin、animation、morph target。
+
+#### engine/core/include/rain/core/math/mat4.hpp
+- 修改函数：无逻辑修改。
+- 改动内容：规范文件尾换行；保留现有 make_normal_matrix 实现。
+- 修改原因：消除文件末尾格式问题。
+- 影响范围：无行为变化。
+
+#### engine/render/src/render_system_3d.cpp
+- 修改函数：build_camera_frame、make_render_query、make_camera_query、prepare、submit。
+- 改动内容：包含 world_transform_3d_component；使用世界 position/forward/up 构造层级相机；读取 world_transform_3d_component::matrix 字段；将 ObjectConstants 尺寸断言从 128 修正为三个 mat4 对应的 192 字节；上传 normal matrix。
+- 修改原因：render system 已改用层级计算后的世界变换，但仍按旧 transform API 访问字段，且 CPU/HLSL 常量缓冲尺寸不一致。
+- 影响范围：父子层级中的相机和 mesh 会按最终世界矩阵渲染；非均匀缩放使用 normal matrix。
+
+#### engine/runtime/include/rain/runtime/world.hpp
+- 修改类：world。
+- 改动内容：规范文件尾换行；保留新增的父子关系和层级查询接口。
+- 修改原因：消除文件末尾格式问题。
+- 影响范围：无额外接口变化。
+
+#### engine/runtime/include/rain/runtime/transform_hierarchy_system_3d.hpp
+- 重命名并保留函数：transform_hierarchy_system_3d。
+- 改动内容：修正原文件名 tranform 的拼写，使其与 CMake 和公共 include 路径一致。
+- 修改原因：原文件名导致 CMake Generate 直接失败。
+- 影响范围：调用方应包含 <rain/runtime/transform_hierarchy_system_3d.hpp>。
+
+#### engine/runtime/src/transform_hierarchy_system_3d.cpp
+- 修改函数：local_matrix_of、transform_hierarchy_system_3d。
+- 改动内容：修正公共头文件 include；使用 get_component 获取 query 已保证存在的 transform；修复 inherits_parent 变量拼写；修正根节点条件，只有无候选父节点或不继承父节点的实体作为遍历根；子节点按标签决定继承父 world matrix。
+- 修改原因：原逻辑既无法编译，也会把应继承父变换的子节点先当作根节点处理。
+- 影响范围：transform.inherit_parent 标签现在真正控制 local * parent_world 组合。
+
+#### engine/runtime/src/world.cpp
+- 修改函数：world::has_tag_in_hierarchy。
+- 改动内容：将 visiteed_count 修正为 visited_count。
+- 修改原因：解决编译错误并保留层级遍历循环保护。
+- 影响范围：父链标签查询可以正常编译和运行。
+
+#### samples/sample_2d_action/src/main.cpp
+- 修改类：sample_layer。
+- 修改函数：on_attach、on_detach。
+- 改动内容：直接包含 gltf_model_3d.hpp 和 transform_hierarchy_system_3d.hpp；统一调用 destroy_gltf_model_3d；修复模型位置浮点字面量；保留模型加载和层级系统注册。
+- 修改原因：原代码缺少公共声明 include，并使用了错误 API 名和非法数字字面量。
+- 影响范围：若 assets/models/test_model/model.gltf 存在则加载；当前仓库中该文件不存在时 importer 会记录错误并安全返回，立方体样例仍继续运行。
+
+#### samples/sample_2d_action/src/sample_3d_world_builder.cpp
+- 修改函数：build_sample_3d_world。
+- 改动内容：给 camera 和 cube 添加 transform.3d 标签。
+- 修改原因：层级系统只处理带 transform.3d 标签的实体；缺少标签时不会生成 world_transform，3D render query 会过滤掉相机和立方体。
+- 影响范围：原有 3D 相机和旋转立方体重新进入渲染路径。
+
+#### docs/3D新增代码检查.txt
+- 改动内容：将结论明确为“检查时状态”，追加后续修复已通过验证的说明。
+- 修改原因：避免修复完成后历史检查报告仍声称当前工程无法构建。
+- 影响范围：仅文档。
+
+#### docs/修复3D层级与glTF导入.txt
+- 新增文件。
+- 改动内容：记录本次所有文件级修改、行为、风险和验证结果。
+- 修改原因：遵循项目 AGENTS.md 的任务归档要求。
+- 影响范围：仅文档。
+
+### 3. 行为变化
+
+- CMake 可以找到层级系统头文件并完成生成。
+- transform.3d 实体会生成/更新 world_transform_3d_component。
+- transform.inherit_parent 子节点正确组合父节点世界矩阵。
+- 3D render system 使用最终世界矩阵、世界相机方向和 192 字节 ObjectConstants。
+- glTF 三角形 mesh、基础 PBR 颜色、外部 base-color 贴图、节点层级可导入为 ECS 实体。
+- 缺失 NORMAL 的 primitive 会自动生成法线。
+- glTF 实例销毁会删除创建的实体并释放 owned mesh/material。
+- 模型文件不存在时安全返回无效实例，不影响现有 cube 样例继续运行。
+
+### 4. 风险点
+
+- 仓库当前不存在 assets/models/test_model/model.gltf，实际样例只能验证缺失文件容错和原有 cube 渲染；需要提供模型后再做画面验证。
+- importer 暂不支持 GLB 内嵌图片/buffer-view image、skin、animation、morph target、多个 UV 集和非 triangle primitive。
+- material_3d 的 alpha blend 目前仍受 render_system_3d 固定 pipeline 限制，透明材质尚未按 blend mode 切换 pipeline/排序。
+- texture_asset_registry 负责贴图缓存生命周期；destroy_gltf_model_3d 不主动卸载贴图，以避免破坏共享纹理，但长期动态加载大量模型时需要引用计数或显式卸载策略。
+
+### 5. 建议验证方式
+
+已执行并通过：
+
+1. GCC Debug 完整配置与构建：sample_2d_action.exe 链接成功。
+2. D3DCompile：mesh_3d.hlsl 的 vertex_main/vs_4_0 与 pixel_main/ps_4_0 均通过。
+3. 5 秒隐藏烟雾测试：sample_2d_action 持续运行，无启动即崩溃。
+4. 层级矩阵回归：父平移 (1,2,3) + 子局部平移 (4,0,0) 得到世界位置 (5,2,3)。
+5. 临时 glTF 回归：三角形模型解析、缺失法线生成、3 个实体/1 个 mesh 创建、层级更新和销毁均通过。
+
+建议提供 assets/models/test_model/model.gltf 及依赖的 bin/贴图后运行：
+
+cmake --build --preset build_gcc_debug -j 1
+.\build\gcc_debug\samples\sample_2d_action\sample_2d_action.exe

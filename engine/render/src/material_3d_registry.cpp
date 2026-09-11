@@ -4,7 +4,9 @@ namespace rain {
     material_3d_registry::material_3d_registry() {
         default_material_ = materials_.create(material_3d{
             .name = "material.default_3d",
-            .albedo_texture = texture_2d_handle{}
+            .metallic_factor = 0.0f,
+            .roughness_factor = 0.8f,
+            .alpha_cutoff = -1.0f
         });
     }
 

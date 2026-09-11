@@ -13,11 +13,10 @@
 #include <vector>
 
 namespace rain {
-    struct camera_3d_frame {
-        mat4 view;
-        mat4 projection;
-        mat4 view_projection;
-        vec3 position;
+    struct render_system_3d_stats {
+        u32 candidate_count = 0;
+        u32 visible_count = 0;
+        u32 culled_count = 0;
     };
 
     class render_system_3d {
@@ -37,6 +36,10 @@ namespace rain {
         [[nodiscard]] static entity_query_desc make_light_query();
         [[nodiscard]] usize command_count() const;
 
+        [[nodiscard]] const render_system_3d_stats& stats()const {
+            return stats_;
+        }
+
     private:
         render_backend* backend_ = nullptr;
         mesh_3d_registry* meshes_ = nullptr;
@@ -48,11 +51,12 @@ namespace rain {
         camera_3d_frame camera_frame_{};
         directional_light_3d_component light_{};
         shader_program_handle shader_;
-        pipeline_state_handle pipeline_;
+        pipeline_state_handle pipelines_[3][2][2]{};
         render_buffer_handle object_constants_;
         render_buffer_handle scene_constants_;
         render_buffer_handle material_constants_;
         bool has_camera_ = false;
+        render_system_3d_stats stats_;
     };
 
     void render_prepare_system_3d(system_context& context, void* user_data);

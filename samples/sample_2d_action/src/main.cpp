@@ -1,5 +1,6 @@
 // #include <rain/app/application.hpp>
 // #include <rain/app/layer.hpp>
+#include <rain/asset/gltf_model_3d.hpp>
 #include <rain/core/log.hpp>
 // #include <rain/core/event/event_debug_dump.hpp>
 // #include <rain/core/log.hpp>
@@ -219,6 +220,7 @@
 
 #include <rain/app/application.hpp>
 #include <rain/app/layer.hpp>
+#include <rain/asset/gltf_model_3d.hpp>
 #include <rain/core/log.hpp>
 #include <rain/platform/input_action.hpp>
 #include <rain/platform/key_code.hpp>
@@ -229,6 +231,7 @@
 #include <rain/runtime/angular_velocity_3d_component.hpp>
 #include <rain/runtime/rotation_system_3d.hpp>
 #include <rain/runtime/transform_3d_component.hpp>
+#include <rain/runtime/transform_hierarchy_system_3d.hpp>
 #include <rain/render/sprite_2d_component.hpp>
 #include <rain/runtime/movement_system_2d.hpp>
 #include <rain/runtime/transform_2d_component.hpp>
@@ -303,6 +306,8 @@ public:
             context.meshes_3d->destroy(cube_mesh_);
             cube_mesh_ = {};
         }
+
+        rain::destroy_gltf_model_3d(model_, *context.target_world, *context.meshes_3d, *context.materials_3d);
     }
 
     void on_attach(rain::application_context& context) override
@@ -418,6 +423,49 @@ public:
             .user_data = render_system_3d_.get()
         });
 
+        context.scheduler->add_system({
+            .system_name =
+                "system.transform_hierarchy_3d",
+
+            .owner_name = "runtime",
+
+            .phase =
+                rain::system_phase::post_update,
+
+            .priority = 100,
+            .enabled = true,
+
+            .entity_query = rain::entity_query_desc{
+                .required_components = {
+                    rain::get_type_id<
+                        rain::transform_3d_component
+                    >()
+                },
+
+                .required_tags = [] {
+                    rain::tag_query query;
+
+                    query.require_all(
+                        rain::tag_id{"transform.3d"}
+                    );
+
+                    query.reject(
+                        rain::tag_id{"transform.disabled"}
+                    );
+
+                    return query;
+                }(),
+
+                .require_alive = true,
+                .require_active = true
+            },
+
+            .function =
+                &rain::transform_hierarchy_system_3d,
+
+            .user_data = nullptr
+        });
+
         for (const rain::system_debug_info& info : context.scheduler->debug_infos())
         {
             char message[256]{};
@@ -487,6 +535,13 @@ public:
             4096
         );
 
+        model_ = rain::instantiate_gltf_model_3d("assets/models/test_model/model.gltf", *context.target_world, *context.meshes_3d, *context.materials_3d, *context.assets);
+        rain::transform_3d_component* transform = context.target_world->try_get_component<rain::transform_3d_component>(model_.root);
+        if (transform != nullptr) {
+            transform->position = { 0.0f,0.0f,0.0f };
+
+            transform->scale = {1.0f,1.0f,1.0f};
+        }
 
         context.scheduler->add_system({
             .system_name = "system.render_prepare_2d",
@@ -628,7 +683,7 @@ private:
 
     rain::mesh_3d_handle cube_mesh_;
     rain::material_3d_handle cube_material_;
-
+    rain::gltf_model_3d_instance model_;
 };
 
 int main()

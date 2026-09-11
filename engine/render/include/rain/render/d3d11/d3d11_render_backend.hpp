@@ -1,6 +1,7 @@
 #pragma once
 #include<rain/core/types.hpp>
 #include<rain/render/render_backend.hpp>
+#include <rain/render/d3d11/d3d11_frame_targets.hpp>
 #include<memory>
 #include<d3d11.h>
 #include<dxgi.h>
@@ -273,12 +274,11 @@
 
 		void create_device();
 		void create_swap_chain();
-		void create_render_target_view();
+		void create_frame_targets();
 		void create_default_sampler();
 		void release_render_resources();
 		void set_viewport();
 		void create_blend_state(render_blend_mode belnd_mode,ID3D11BlendState** out_blend_state);
-		void create_depth_stencil();
 		void clear_depth(f32 depth)override;
 	private:
 		struct d3d11_shader_program {
@@ -315,6 +315,7 @@
 			render_blend_mode blend_mode = render_blend_mode::opaque;
 			ID3D11RasterizerState* rasterizer_state = nullptr;
 			ID3D11DepthStencilState* depth_stencil_state = nullptr;
+            bool srgb_write_enabled = false;
 		};
 
 		struct d3d11_texture_2d {
@@ -336,7 +337,8 @@
 		ID3D11Device* device_ = nullptr;
 		ID3D11DeviceContext* device_context_ = nullptr;
 		IDXGISwapChain* swap_chain_ = nullptr;
-		ID3D11RenderTargetView* render_target_view_ = nullptr;
+        ID3D11Texture2D* back_buffer_ = nullptr;
+        detail::d3d11_frame_targets frame_targets_;
 
 		ID3D11VertexShader* debug_vertex_shader_ = nullptr;
 		ID3D11PixelShader* debug_pixel_shader_ = nullptr;
@@ -362,8 +364,6 @@
 
 		std::array<texture_2d_handle, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT>current_pixel_textures_{};
 
-		ID3D11Texture2D* depth_texture_ = nullptr;
-		ID3D11DepthStencilView* depth_stencil_view_ = nullptr;
 
 	};
 

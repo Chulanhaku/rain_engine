@@ -1,0 +1,2291 @@
+## 代码变更汇总
+
+任务：3D Frustum Culling + Metallic-Roughness PBR
+日期：2026-09-11
+基准：本次任务开始时的工作区内容。保留原有未提交的 glTF、3D 层级和剔除半成品；文末 diff 只记录本次增量，不是相对 HEAD 的全部改动。
+
+### 1. 修改文件列表
+
+- CMakeLists.txt（修改）
+- engine/core/include/rain/core/math/mat4.hpp（修改）
+- engine/render/CMakeLists.txt（修改）
+- engine/render/include/rain/render/camera_3d.hpp（修改）
+- engine/render/include/rain/render/frustum_culling_3d.hpp（修改）
+- engine/render/include/rain/render/material_3d.hpp（修改）
+- engine/render/include/rain/render/render_command_3d.hpp（修改）
+- engine/render/include/rain/render/render_resource_desc.hpp（修改）
+- engine/render/include/rain/render/render_system_3d.hpp（修改）
+- engine/render/include/rain/render/d3d11/d3d11_render_backend.hpp（修改）
+- engine/render/shaders/mesh_3d.hlsl（修改）
+- engine/render/src/d3d11/d3d11_render_backend.cpp（修改）
+- engine/render/src/material_3d_registry.cpp（修改）
+- engine/render/src/mesh_3d_registry.cpp（修改）
+- engine/render/src/render_system_3d.cpp（修改）
+- engine/asset/include/rain/asset/texture_asset_registry.hpp（修改）
+- engine/asset/src/texture_asset_registry.cpp（修改）
+- engine/asset/src/gltf_model_3d.cpp（修改）
+- samples/CMakeLists.txt（修改）
+- samples/sample_2d_action/src/sample_3d_world_builder.cpp（修改）
+- samples/sample_3d_pbr/CMakeLists.txt（新增）
+- samples/sample_3d_pbr/src/main.cpp（新增）
+- tests/CMakeLists.txt（新增）
+- tests/render_3d_tests.cpp（新增）
+- tests/pbr_shader_tests.cpp（新增）
+- docs/3D Frustum Culling + Metallic-Roughness PBR.txt（新增：本说明与任务 diff 归档）
+
+无删除文件。
+
+### 2. 逐文件变更说明
+
+#### CMakeLists.txt
+
+- 修改类 / 函数 / 数据结构：构建入口
+- 改动内容：启用 rain_build_tests 分支中的 enable_testing() 与 tests 子目录。
+- 修改原因：原测试选项没有连接任何目标。
+- 影响范围：默认仍关闭测试；开启后增加 CTest 入口。
+
+#### engine/core/include/rain/core/math/mat4.hpp
+
+- 修改类 / 函数 / 数据结构：头文件依赖
+- 改动内容：显式包含 <algorithm>，清理行尾空白。
+- 修改原因：max_basis_scale 使用 std::max，需要独立可编译的头文件依赖。
+- 影响范围：数学函数和矩阵约定不变。
+
+#### engine/render/CMakeLists.txt
+
+- 修改类 / 函数 / 数据结构：rain_render 源文件列表
+- 改动内容：登记 bounds_3d.hpp 与 frustum_culling_3d.hpp。
+- 修改原因：把已有剔除头文件纳入构建工程。
+- 影响范围：不改变链接接口。
+
+#### engine/render/include/rain/render/camera_3d.hpp
+
+- 修改类 / 函数 / 数据结构：camera_3d_component、camera_3d_frame
+- 改动内容：将 camera_3d_frame 从渲染系统头文件迁入相机头文件，并修正 near_plane 浮点字面量。
+- 修改原因：剔除数学不应循环依赖 render_system_3d。
+- 影响范围：类型名不变；直接使用相机帧时可单独包含本头文件。
+
+#### engine/render/include/rain/render/frustum_culling_3d.hpp
+
+- 修改类 / 函数 / 数据结构：frustum_plane_3d、camera_frustum_3d、extract_camera_frustum()、transform_bounding_sphere()、sphere_inside_camera_frustum()
+- 改动内容：替换未完成的 FOV 手工判断，从行向量 view_projection 提取 D3D 六平面；加入相切容差、退化平面和无效包围体保守处理；使用 A*A^T 绝对行和上界处理负缩放、非均匀缩放及层级剪切。
+- 修改原因：原实现含未定义变量、纵横比判断错误、缺失返回值，最长基向量法在剪切下会低估半径。
+- 影响范围：保留原函数名和 camera_3d_frame 重载；帧重载以 view_projection 为准。该文件在本任务开始时已存在且未跟踪，本次为续改。
+
+#### engine/render/include/rain/render/material_3d.hpp
+
+- 修改类 / 函数 / 数据结构：material_3d_desc
+- 改动内容：将 netakkuc_factor 更正为 metallic_factor；新增 metallic_roughness_texture、double_sided、albedo_manual_srgb_decode；明确线性 base_color 与纹理句柄默认值。
+- 修改原因：把已有半成品材质字段接成可用的 Metallic-Roughness 接口。
+- 影响范围：使用旧拼写的调用点须改名；已有 albedo/base_color/blend_mode 指定初始化可继续使用。
+
+#### engine/render/include/rain/render/render_command_3d.hpp
+
+- 修改类 / 函数 / 数据结构：render_command_3d
+- 改动内容：追加 camera_view_depth 和 blend_mode。
+- 修改原因：透明排序需要视空间深度，并需保存 prepare 时的混合类别。
+- 影响范围：旧字段保留；结构布局扩展，使用方需重新编译。
+
+#### engine/render/include/rain/render/render_resource_desc.hpp
+
+- 修改类 / 函数 / 数据结构：texture_format、pipeline_state_desc
+- 改动内容：新增 rgba8_unorm_srgb 和 srgb_write_enabled。
+- 修改原因：底色采样、显示编码和透明混合需要明确色彩空间。
+- 影响范围：默认格式及默认写入方式保持旧 2D 行为；3D 显式开启 sRGB 写入。
+
+#### engine/render/include/rain/render/render_system_3d.hpp
+
+- 修改类 / 函数 / 数据结构：render_system_3d、stats()
+- 改动内容：修复 stats() 缺失分号；移出 camera_3d_frame；将单管线改为 3 种混合模式 × 2 种单双面 × 2 种绕序的管线数组。
+- 修改原因：原头文件无法编译，单管线也无法表达 glTF 材质状态。
+- 影响范围：prepare/submit/clear/stats 等公开调用方式不变。
+
+#### engine/render/include/rain/render/d3d11/d3d11_render_backend.hpp
+
+- 修改类 / 函数 / 数据结构：d3d11_pipeline_state、d3d11_render_backend
+- 改动内容：保存管线 sRGB 写入状态，新增交换链 sRGB RTV 成员。
+- 修改原因：支持按 2D/3D 管线切换输出视图。
+- 影响范围：公开 render_backend 虚接口不变。
+
+#### engine/render/shaders/mesh_3d.hlsl
+
+- 修改类 / 函数 / 数据结构：vertex_main()、pixel_main()、safe_normalize()、srgb_to_linear()、distribution_ggx()、geometry_schlick_ggx()、fresnel_schlick()
+- 改动内容：补齐并修正原有未完成 PBR：GGX 分布、Smith-Schlick 几何项、Schlick Fresnel、金属/介电质漫反射分配；MR 读取 G/B；支持底色解码、alpha cutoff、双面法线、安全归一化和最小粗糙度；Reinhard 映射后输出线性 RGB，由 RTV 编码。
+- 修改原因：原 HLSL 存在大小写、类型、采样器、PI 和 const 写入错误，且缺乏完整显示链路。
+- 影响范围：保留 vertex_main/pixel_main 入口及 b0/b1/b2、t0；新增 t1 语义。3D 视觉表现改变，需通过 CMake 重建内嵌着色器。
+
+#### engine/render/src/d3d11/d3d11_render_backend.cpp
+
+- 修改类 / 函数 / 数据结构：to_dxgi_format()、create_pipeline_state()、set_pipeline_state()、create_render_target_view()、resize()、shutdown()
+- 改动内容：映射 sRGB 纹理格式；创建/释放 sRGB RTV；绑定管线时选择输出视图并恢复深度目标；resize 同步释放两种 RTV；shutdown 释放深度视图和纹理。
+- 修改原因：clear() 原先解绑深度后没有恢复，实际 3D 深度测试失效；PBR 透明混合需要线性空间，新增视图必须完整管理生命周期。
+- 影响范围：3D 遮挡、透明混合与显示编码生效；2D 默认使用原 UNORM 视图。
+
+#### engine/render/src/material_3d_registry.cpp
+
+- 修改类 / 函数 / 数据结构：material_3d_registry::material_3d_registry()
+- 改动内容：修复非法指定初始化，默认材质设置 metallic=0、roughness=0.8、alpha_cutoff=-1。
+- 修改原因：原构造函数有拼写、标点及初始化顺序问题。
+- 影响范围：默认材质句柄规则保持不变，失效材质仍可回退。
+
+#### engine/render/src/mesh_3d_registry.cpp
+
+- 修改类 / 函数 / 数据结构：calculate_bounds()、mesh_3d_registry::create()
+- 改动内容：正确遍历全部顶点更新 min/max，再计算覆盖所有顶点的球半径；新增非有限顶点、越界索引和 GPU 缓冲创建失败检查，索引缓冲失败时释放顶点缓冲。
+- 修改原因：原 bounds 重复更新 minimum、未更新 maximum，且在循环首轮提前返回，导致错误剔除。
+- 影响范围：create 接口不变；坏输入/上传失败返回无效句柄，正常网格获得可靠 local_bounds。
+
+#### engine/render/src/render_system_3d.cpp
+
+- 修改类 / 函数 / 数据结构：构造/析构、prepare()、submit()、clear()、unit_factor()、blend_index()、has_mirrored_winding()
+- 改动内容：每帧只提取一次平面；先排除隐藏层级和无效网格，再执行继承剔除/强制可见标签并统计；验证相机参数；同 layer 内不透明由近到远、透明由远到近；上传完整 PBR 常量并绑定/清空两纹理槽；选择混合/双面/镜像管线，透明关闭深度写入；重置统计并为无效排序深度提供有限回退。
+- 修改原因：修复未声明函数、错误 mesh 指针访问、重复变量、统计不一致及只用单一不透明管线的问题。
+- 影响范围：沿用 render.frustum_cull 的选择性开启语义，render.always_visible 可绕过；candidate=visible+culled，隐藏/坏网格不计候选。
+
+#### engine/asset/include/rain/asset/texture_asset_registry.hpp
+
+- 修改类 / 函数 / 数据结构：texture_asset_record、load_texture_2d()、unload_texture_2d()
+- 改动内容：记录纹理格式，为按路径加载/卸载增加带默认值的 format 参数。
+- 修改原因：同一图像可能同时作为 sRGB 底色和线性数据使用。
+- 影响范围：既有单参数调用继续按 rgba8_unorm 工作；新增格式参数调用需匹配。
+
+#### engine/asset/src/texture_asset_registry.cpp
+
+- 修改类 / 函数 / 数据结构：texture_cache_id()、load_texture_2d()、unload_texture_2d()
+- 改动内容：按路径与色彩空间区分缓存，上传传入格式，记录格式，按相同格式卸载；线性纹理保留旧 asset_id。
+- 修改原因：防止同路径底色/MR 贴图错误复用同一个 GPU 视图。
+- 影响范围：旧 2D 缓存 ID 不变；sRGB 记录拥有独立 ID，可从 records() 获取。
+
+#### engine/asset/src/gltf_model_3d.cpp
+
+- 修改类 / 函数 / 数据结构：import_material_texture()、import_material()、resolve_material()
+- 改动内容：读取金属度/粗糙度因子和 MR 图；底色用 sRGB、MR 用线性纹理；导入 MASK cutoff、BLEND 和 doubleSided；处理省略材质的 glTF 默认因子并缓存；解码外部图像 URI；遇到不支持的 UV 集/纹理变换/嵌入图像时警告并回退因子。
+- 修改原因：原导入只使用 baseColor，忽略 PBR 参数及实际材质状态。
+- 影响范围：instantiate/destroy 公共接口不变，保留已有节点层级与剔除标签。该文件原已存在且未跟踪，本次为续改。
+
+#### samples/CMakeLists.txt
+
+- 修改类 / 函数 / 数据结构：样例子目录注册
+- 改动内容：新增 sample_3d_pbr 子目录。
+- 修改原因：提供独立材质与剔除验证入口。
+- 影响范围：rain_build_samples 开启时增加一个可执行文件。
+
+#### samples/sample_2d_action/src/sample_3d_world_builder.cpp
+
+- 修改类 / 函数 / 数据结构：build_sample_3d_world()
+- 改动内容：将剔除标签中的 tag_id 修正为 rain::tag_id。
+- 修改原因：补齐现有部分实现的命名空间，恢复旧样例编译。
+- 影响范围：场景内容与标签语义不变。
+
+#### samples/sample_3d_pbr/CMakeLists.txt
+
+- 修改类 / 函数 / 数据结构：sample_3d_pbr 目标
+- 改动内容：新增独立样例目标并链接 rain_app。
+- 修改原因：使新展示场景可单独构建运行。
+- 影响范围：新增文件；不改变旧样例入口。
+
+#### samples/sample_3d_pbr/src/main.cpp
+
+- 修改类 / 函数 / 数据结构：create_sphere()、pbr_layer::add_transform()/add_sphere()/on_attach()/on_update()/on_render()/on_detach()、main()
+- 改动内容：生成共享 UV 球网格；建立 5×6 材质阵列、1 个 MR 贴图球和 240 个屏幕外对象；接入带查询上下文的层级更新；提供 WASD/QE、方向键、C 开关、R 复位、Esc 退出和 --frames 定帧运行；记录统计并释放资源。
+- 修改原因：为金属/非金属、粗糙度变化和剔除提供无需外部资产的可复现样例。
+- 影响范围：新增文件；独立程序，不覆盖原 sample_2d_action 场景。
+
+#### tests/CMakeLists.txt
+
+- 修改类 / 函数 / 数据结构：rain_3d_tests、rain_3d_regressions
+- 改动内容：新增 CTest 目标，链接 rain_asset/d3d11/d3dcompiler，读取实际生成的着色器头文件并设置 30 秒超时。
+- 修改原因：让测试覆盖生产 HLSL，而非另写一份着色器副本。
+- 影响范围：新增文件；需显式开启 rain_build_tests。
+
+#### tests/render_3d_tests.cpp
+
+- 修改类 / 函数 / 数据结构：recording_backend、test_frustum_planes()、test_bounds()、test_render_prepare_and_submit()、test_transform_hierarchy_culling()、test_gltf_materials()
+- 改动内容：新增六平面/相切/纵横比/FOV/clip 检查，剪切包围体和上传失败检查，真实层级到剔除集成，统计与排序/常量/管线状态检查，以及自生成 glTF/TGA 缓存与导入测试。
+- 修改原因：覆盖本批已修复的 CPU 和资源链路故障，测试数据不依赖用户模型。
+- 影响范围：新增文件；测试夹具仅生成在测试工作目录。
+
+#### tests/pbr_shader_tests.cpp
+
+- 修改类 / 函数 / 数据结构：warp_renderer、render()、check_srgb_blending()、test_pbr_shader()
+- 改动内容：实际使用严格 D3DCompile 编译生产 HLSL，并通过 D3D11 WARP 浮点离屏输出/readback 检查金属度、粗糙度、MR 通道、sRGB 解码、MASK/BLEND、零光照及有限像素；另验证 sRGB RTV 的线性透明混合。
+- 修改原因：C++ 构建不会发现运行时 HLSL 编译和实际像素错误。
+- 影响范围：新增文件；需 Windows D3D11 WARP 与 D3DCompiler，不需要显示窗口。
+
+#### docs/3D Frustum Culling + Metallic-Roughness PBR.txt
+
+- 新增文件：按文件归档本批改动、行为、风险和验证方式；附任务开始时快照到最终源码的 diff。归档不包含本文件自身的递归 diff，也不改变运行时行为。
+
+### 3. 行为变化
+
+- 标记 render.frustum_cull 的实体及其继承该标签的子树会在提交前执行六平面球体剔除；render.always_visible 可在层级中覆盖剔除，render.hidden 仍优先隐藏。
+- 非均匀/负缩放、旋转父子层级形成的剪切不会因低估包围球而误删可见对象。相切球体保留，候选统计满足 candidate = visible + culled。
+- 金属度、粗糙度、MR 贴图 G/B 通道与底色因子贯通 glTF -> 材质 -> GPU 常量 -> HLSL。默认引擎材质为非金属；省略 glTF 材质/因子时采用 glTF 默认值。
+- 3D 具备正确的深度目标绑定；不透明和 MASK 写深度，BLEND/ADDITIVE 保留深度测试但不写深度；同 layer 内透明对象按视空间深度从远到近提交。
+- 底色与数据贴图区分 sRGB/线性格式。3D 使用 sRGB RTV 进行最终编码和线性透明混合；2D 默认继续使用原 UNORM 视图。
+- 新展示样例运行得到 candidate=271、visible=31、culled=240，24 帧后退出码 0。日志位于 build/gcc_debug/pbr_smoke.stdout.log，stderr 为空。
+
+### 4. 风险点
+
+- 本批为单方向光的基础 Metallic-Roughness PBR，加漫反射环境近似；尚无 IBL 环境高光、阴影、法线/AO/自发光贴图。纯金属背光区域会较暗。
+- 当前 glTF 图像导入支持外部文件与 TEXCOORD_0；嵌入图像、其他 UV 集、KHR_texture_transform 会警告并使用因子回退。现有窄字符文件读取仍建议使用项目相对路径。
+- 透明使用物体级排序，交叉/互穿透明网格不能保证逐三角形正确；色调映射目前在材质着色阶段执行，尚非 HDR 场景统一合成管线。
+- base_color/tint 约定为线性 RGB。手工加载 sRGB 底色时，使用 rgba8_unorm_srgb 并将 albedo_manual_srgb_decode 设为 false，避免重复解码；线性 MR 图保持 rgba8_unorm。
+- metallic_factor 修复了原 netakkuc_factor 拼写；外部若引用了旧拼写，需要更新并重编译。着色器通过 CMake 内嵌，修改 HLSL 后必须重新构建。
+
+### 5. 建议验证方式
+
+已执行并通过：
+
+- GCC Debug 全目标构建：rain_render、rain_asset、rain_app、原 sample_2d_action、新 sample_3d_pbr、rain_3d_tests。
+- CTest：rain_3d_regressions，1/1 通过；含 CPU 六平面、剪切/负缩放、层级到剔除集成、材质常量、透明顺序、缓存与自生成 glTF 导入检查。
+- HLSL：实际生产 vertex_main/pixel_main 以 vs_4_0/ps_4_0 严格编译，警告视为错误。
+- D3D11 WARP：浮点离屏读回结果有限；金属度与粗糙度变化的平均 RGB 差异分别为 0.471806、0.315288；MR 通道、因子乘积、sRGB、MASK/BLEND 和线性透明混合均通过。
+- sample_3d_pbr --frames 24：启动、绘制、统计、资源释放与退出均正常。未进行人工视觉验收。
+
+在项目根目录的 PowerShell 运行：
+
+```powershell
+$env:PATH = 'C:\msys64\ucrt64\bin;' + $env:PATH
+cmake -S . -B build/gcc_debug -Drain_build_tests=ON
+cmake --build build/gcc_debug -j 8
+ctest --test-dir build/gcc_debug --output-on-failure
+.\build\gcc_debug\samples\sample_3d_pbr\sample_3d_pbr.exe
+```
+
+- 构建请使用 Z: 映射项目路径；本机 Ninja 的 cmd 子进程不支持 UNC 当前目录。
+- 展示网格从左到右 roughness=0.08..1，从上到下 metallic=0..1。底部额外球体使用 MR 条纹贴图。
+- WASD 移动，Q/E 升降，方向键转向；C 切换剔除，观察 visible/culled 变化；R 复位；Esc 退出。
+- 建议人工调整窗口宽高、转动相机扫过视锥边缘，再运行原 sample_2d_action 确认 2D/3D 混合画面和 glTF 遮挡效果。
+
+实现核对资料：
+
+- glTF 2.0： https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html
+- D3D11 Blend 描述： https://learn.microsoft.com/en-us/windows/win32/api/d3d11/ns-d3d11-d3d11_blend_desc
+
+附录：本次任务 diff（相对任务开始时的文件快照）
+
+--- a/engine/render/include/rain/render/render_system_3d.hpp
++++ b/engine/render/include/rain/render/render_system_3d.hpp
+@@ -13,18 +13,6 @@
+ #include <vector>
+ 
+ namespace rain {
+-    struct camera_3d_frame {
+-        mat4 view;
+-        mat4 projection;
+-        mat4 view_projection;
+-        vec3 position;
+-
+-        f32 vertical_fov_radians = 1.04719755f;
+-        f32 aspect_ratio = 1.0f;
+-        f32 near_plane = 0.1;
+-        f32 far_plane = 1000.0f;
+-    };
+-
+     struct render_system_3d_stats {
+         u32 candidate_count = 0;
+         u32 visible_count = 0;
+@@ -47,9 +35,9 @@
+         [[nodiscard]] static entity_query_desc make_render_query();
+         [[nodiscard]] static entity_query_desc make_light_query();
+         [[nodiscard]] usize command_count() const;
+-        
++
+         [[nodiscard]] const render_system_3d_stats& stats()const {
+-            return stats_
++            return stats_;
+         }
+ 
+     private:
+@@ -63,7 +51,7 @@
+         camera_3d_frame camera_frame_{};
+         directional_light_3d_component light_{};
+         shader_program_handle shader_;
+-        pipeline_state_handle pipeline_;
++        pipeline_state_handle pipelines_[3][2][2]{};
+         render_buffer_handle object_constants_;
+         render_buffer_handle scene_constants_;
+         render_buffer_handle material_constants_;
+--- a/engine/render/include/rain/render/camera_3d.hpp
++++ b/engine/render/include/rain/render/camera_3d.hpp
+@@ -1,16 +1,24 @@
+ #pragma once
+ 
+-#include<rain/core/types.hpp>
+-#include<rain/render/render_command_3d.hpp>
+-
++#include <rain/core/math/mat4.hpp>
+ 
+ namespace rain {
+-	struct camera_3d_component {
+-		f32 vertical_fov_radians = 1.04719755f;
+-		f32 near_plane = 0.1f;
+-		f32 far_plane = 1000.0f;
+-	};
++    struct camera_3d_component {
++        f32 vertical_fov_radians = 1.04719755f;
++        f32 near_plane = 0.1f;
++        f32 far_plane = 1000.0f;
++    };
+ 
++    struct camera_3d_frame {
++        mat4 view;
++        mat4 projection;
++        mat4 view_projection;
++        vec3 position;
+ 
++        f32 vertical_fov_radians = 1.04719755f;
++        f32 aspect_ratio = 1.0f;
++        f32 near_plane = 0.1f;
++        f32 far_plane = 1000.0f;
++    };
+ 
+-}+}
+--- a/engine/render/include/rain/render/frustum_culling_3d.hpp
++++ b/engine/render/include/rain/render/frustum_culling_3d.hpp
+@@ -1,40 +1,87 @@
+ #pragma once
+ 
+-#include<rain/render/bounds_3d.hpp>	
+-#include<rain/core/math/mat4.hpp>
+-#include<rain/render/camera_3d.hpp>
+-#include<rain/render/render_system_3d.hpp>
++#include <rain/render/bounds_3d.hpp>
++#include <rain/render/camera_3d.hpp>
+ 
+-#include<cmath>
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <limits>
+ 
+ namespace rain {
+-	[[nodiscard]] inline bounding_sphere_3d transform_bounding_sphere(const bounding_sphere_3d& local_bounds, const mat4& world_matrix) {
+-		return bounding_sphere_3d{ .center = transform_point(local_bounds.center,world_matrix),.radius = local_bounds.radius * max_basis_scale(world_matrix) };
+-	}
+-	
+-	[[nodiscard]] inline bool sphere_inside_camera_frustum(const bounding_sphere_3d& world_bounds, const camera_3d_frame& camera) {
+-		const vec3 view_center = transform_point(world_bounds.center,camera.view);
++    struct frustum_plane_3d {
++        vec3 normal{};
++        f32 distance = 0.0f;
++    };
+ 
+-		const f32 radius = world_bounds.radius;
++    struct camera_frustum_3d {
++        std::array<frustum_plane_3d, 6> planes{};
++    };
+ 
+-		if (view_center.z + radius < camera.near_plane)return false;
++    // Row-vector matrices, D3D clip volume: -w <= x,y <= w, 0 <= z <= w.
++    [[nodiscard]] inline camera_frustum_3d extract_camera_frustum(const mat4& view_projection) {
++        camera_frustum_3d result{};
++        const auto& m = view_projection.values;
++        for (usize index = 0; index < result.planes.size(); ++index) {
++            const usize axis = index / 2;
++            const f32 sign = index % 2 == 0 ? 1.0f : -1.0f;
++            const f32 w = index == 4 ? 0.0f : 1.0f;
++            auto& plane = result.planes[index];
++            plane.normal = {w * m[0][3] + sign * m[0][axis],
++                            w * m[1][3] + sign * m[1][axis],
++                            w * m[2][3] + sign * m[2][axis]};
++            plane.distance = w * m[3][3] + sign * m[3][axis];
++            const f32 normal_length = length(plane.normal);
++            if (normal_length > 0.0f && std::isfinite(normal_length)) {
++                plane.normal = plane.normal * (1.0f / normal_length);
++                plane.distance /= normal_length;
++            } else {
++                // Degenerate planes must never discard geometry.
++                plane = {};
++            }
++        }
++        return result;
++    }
+ 
+-		if (view_center.z - radius > camera.far_plane)return false;
++    [[nodiscard]] inline bounding_sphere_3d transform_bounding_sphere(
++        const bounding_sphere_3d& local_bounds, const mat4& world_matrix) {
++        // sqrt(max absolute row sum of A*A^T) bounds the largest singular
++        // value. Unlike the longest basis vector, this also handles shear
++        // introduced by rotated children under nonuniformly scaled parents.
++        f32 scale_squared = 0.0f;
++        for (usize row = 0; row < 3; ++row) {
++            f32 row_sum = 0.0f;
++            for (usize column = 0; column < 3; ++column) {
++                f32 entry = 0.0f;
++                for (usize k = 0; k < 3; ++k)
++                    entry += world_matrix.values[row][k] * world_matrix.values[column][k];
++                row_sum += std::abs(entry);
++            }
++            if (!std::isfinite(row_sum))
++                return {transform_point(local_bounds.center, world_matrix),
++                        std::numeric_limits<f32>::infinity()};
++            scale_squared = std::max(scale_squared, row_sum);
++        }
++        return {transform_point(local_bounds.center, world_matrix),
++                local_bounds.radius * std::sqrt(scale_squared)};
++    }
+ 
+-		const f32 tan_half_vertical = std::tan(camera_vertical_fov_radians * 0.5f);
++    [[nodiscard]] inline bool sphere_inside_camera_frustum(
++        const bounding_sphere_3d& bounds, const camera_frustum_3d& frustum) {
++        if (!std::isfinite(bounds.radius) || bounds.radius < 0.0f ||
++            !std::isfinite(bounds.center.x) || !std::isfinite(bounds.center.y) ||
++            !std::isfinite(bounds.center.z)) return true;
++        for (const auto& plane : frustum.planes) {
++            const f32 distance = dot(plane.normal, bounds.center) + plane.distance;
++            // Keep tangency and absorb float roundoff at large coordinates.
++            const f32 tolerance = 1.0e-5f * (1.0f + bounds.radius + std::abs(plane.distance));
++            if (distance < -bounds.radius - tolerance) return false;
++        }
++        return true;
++    }
+ 
+-		const f32 tan_half_horizontal = tan_half_vertical * camera.aspect_ratio;
+-
+-		const f32 horizontal_normal_length = std::sqrt(1.0f + tan_half_horizontal * tan_half_horizontal);
+-
+-		const f32 vertical_normal_length = std::sqrt(1.0f + tan_half_vertical * tan_half_vertical);
+-
+-		if (view_center.z * tan_half_horizontal + view_center.x < -radius * horizontal_normal_length)return false;
+-
+-		if (view_center.z * tan_half_horizontal - view_center.x < -radius * horizontal_normal_length)return false;
+-
+-		if (view_center.z * tan_half_horizontal - view_center.y < -radius * horizontal_normal_length)return false;
+-
+-		if (view_center.z * tan_half_horizontal + view_center.y < -radius * horizontal_normal_length)return false;
+-	}
+-}+    [[nodiscard]] inline bool sphere_inside_camera_frustum(
++        const bounding_sphere_3d& bounds, const camera_3d_frame& camera) {
++        return sphere_inside_camera_frustum(bounds, extract_camera_frustum(camera.view_projection));
++    }
++}
+--- a/engine/render/src/mesh_3d_registry.cpp
++++ b/engine/render/src/mesh_3d_registry.cpp
+@@ -3,39 +3,26 @@
+ #include<cmath>
+ 
+ namespace {
+-	[[nodiscard]] rain::bounding_sphere_3d calculate_bounds(std::span<const rain::mesh_vertex_3d>vertices) {
+-		using namespace rain;
+-
+-		if (vertices.empty())return{};
+-
+-		vec3 minimum = vertices.front().position;
+-		vec3 maximum = vertices.front().position;
+-
+-		for (const mesh_vertex_3d& vertex : vertices) {
+-			minimum.x = std::min(minimum.x, vertex.position.x);
+-			minimum.y = std::min(minimum.y, vertex.position.y);
+-			minimum.z = std::min(minimum.z, vertex.position.z);
+-			
+-			minimum.x = std::min(minimum.x, vertex.position.x);
+-			minimum.y = std::min(minimum.y, vertex.position.y);
+-			minimum.z = std::min(minimum.z, vertex.position.z);
+-
+-		}
+-
+-		const vec3 center{(minimum.x+maximum.x)*0.5f,(minimum.y+maximum.y)*0.5f,(minimum.z+maximum.z)*0.5f};
+-
+-		f32 radius_squared = 0.0f;
+-
+-		for (const mesh_vertex_3d& vertex : vertices) {
+-			const vec3 difference = vertex.position - center;
+-
+-			radius_squared = std::max(radius_squared, length_squared(difference));
+-
+-			return bounding_sphere_3d{ .center = center,.radius = std::sqrt(radius_squared) };
+-		}
+-	}
++    [[nodiscard]] rain::bounding_sphere_3d calculate_bounds(std::span<const rain::mesh_vertex_3d> vertices) {
++        using namespace rain;
++        if (vertices.empty()) return {};
++        vec3 minimum = vertices.front().position;
++        vec3 maximum = minimum;
++        for (const auto& vertex : vertices) {
++            minimum.x = std::min(minimum.x, vertex.position.x);
++            minimum.y = std::min(minimum.y, vertex.position.y);
++            minimum.z = std::min(minimum.z, vertex.position.z);
++            maximum.x = std::max(maximum.x, vertex.position.x);
++            maximum.y = std::max(maximum.y, vertex.position.y);
++            maximum.z = std::max(maximum.z, vertex.position.z);
++        }
++        const vec3 center = minimum * 0.5f + maximum * 0.5f;
++        f32 radius_squared = 0.0f;
++        for (const auto& vertex : vertices)
++            radius_squared = std::max(radius_squared, length_squared(vertex.position - center));
++        return {center, std::sqrt(radius_squared)};
++    }
+ }
+-
+ 
+ namespace rain {
+ 	mesh_3d_registry::mesh_3d_registry(render_backend& backend) : backend_(&backend) {}
+@@ -45,7 +32,14 @@
+ 	}
+ 
+ 	mesh_3d_handle mesh_3d_registry::create(const mesh_3d_desc& desc) {
+-		if (desc.vertices.empty() || desc.indices.empty()) {
++		if (desc.vertices.empty() || desc.indices.empty() ||
++            std::any_of(desc.indices.begin(), desc.indices.end(),
++                [&](u32 index) { return index >= desc.vertices.size(); }) ||
++            std::any_of(desc.vertices.begin(), desc.vertices.end(),
++                [](const mesh_vertex_3d& vertex) {
++                    return !std::isfinite(vertex.position.x) || !std::isfinite(vertex.position.y) ||
++                           !std::isfinite(vertex.position.z);
++                })) {
+ 			return {};
+ 		}
+ 
+@@ -59,6 +53,8 @@
+ 			}
+ 		);
+ 
++		if (!backend_->is_valid(vertex_buffer)) return {};
++
+ 		const render_buffer_handle index_buffer = backend_->create_index_buffer(render_buffer_desc{
+ 			.name = desc.name + ".indices",
+ 			.bind = render_buffer_bind::index_buffer,
+@@ -70,7 +66,12 @@
+ 		);
+ 
+ 
+-		return meshes_.create(mesh_3d{
++        if (!backend_->is_valid(index_buffer)) {
++            backend_->destroy_render_buffer(vertex_buffer);
++            return {};
++        }
++
++        return meshes_.create(mesh_3d{
+ 			.name = desc.name,
+ 			.vertex_buffer = vertex_buffer,
+ 			.index_buffer = index_buffer,
+--- a/engine/render/include/rain/render/material_3d.hpp
++++ b/engine/render/include/rain/render/material_3d.hpp
+@@ -10,8 +10,9 @@
+ namespace rain {
+ 	struct material_3d_desc {
+ 		std::string name;
+-		texture_2d_handle albedo_texture;
++		texture_2d_handle albedo_texture{};
+ 
++        // Linear RGB; alpha is linear coverage.
+ 		vec4 base_color{
+ 			1.0f,
+ 			1.0f,
+@@ -19,12 +20,18 @@
+ 			1.0f
+ 		};
+ 
+-		f32 netakkuc_factor = 0.0f;
++		f32 metallic_factor = 0.0f;
+ 		f32 roughness_factor = 1.0f;
+ 
+ 		f32 alpha_cutoff = -1.0f;
+ 
+-		render_blend_mode blend_mode = render_blend_mode::opaque;
++        render_blend_mode blend_mode = render_blend_mode::opaque;
++
++        // Linear data texture: green = roughness, blue = metallic.
++        texture_2d_handle metallic_roughness_texture{};
++        bool double_sided = false;
++        // Set false when albedo uses a hardware sRGB view or contains linear data.
++        bool albedo_manual_srgb_decode = true;
+ 
+ 	};
+ 
+--- a/engine/render/src/material_3d_registry.cpp
++++ b/engine/render/src/material_3d_registry.cpp
+@@ -5,9 +5,8 @@
+         default_material_ = materials_.create(material_3d{
+             .name = "material.default_3d",
+             .metallic_factor = 0.0f,
+-            ,roughness_factor = 0.8f,
+-            .alpha_cutoff = -1.0f,
+-            .albedo_texture = texture_2d_handle{}
++            .roughness_factor = 0.8f,
++            .alpha_cutoff = -1.0f
+         });
+     }
+ 
+--- a/engine/render/include/rain/render/render_command_3d.hpp
++++ b/engine/render/include/rain/render/render_command_3d.hpp
+@@ -4,6 +4,7 @@
+ #include<rain/core/math/vec4.hpp>
+ #include<rain/core/types.hpp>
+ #include<rain/render/render_handles.hpp>
++#include <rain/render/render_types.hpp>
+ #include<rain/runtime/entity.hpp>
+ 
+ namespace rain {
+@@ -24,5 +25,7 @@
+ 
+ 		i32 layer = 0;
+ 		u64 submission_index = 0;
++        f32 camera_view_depth = 0.0f;
++        render_blend_mode blend_mode = render_blend_mode::opaque;
+ 	};
+ }--- a/samples/sample_2d_action/src/sample_3d_world_builder.cpp
++++ b/samples/sample_2d_action/src/sample_3d_world_builder.cpp
+@@ -144,7 +144,7 @@
+             rain::tag_id{"object.rotatable"}
+         );
+ 
+-        target_world.add_tag(result.cube, tag_id{"render.frustum_cull"});
++        target_world.add_tag(result.cube, rain::tag_id{"render.frustum_cull"});
+ 
+         result.directional_light =
+             target_world.create_entity(
+--- a/engine/render/CMakeLists.txt
++++ b/engine/render/CMakeLists.txt
+@@ -38,6 +38,8 @@
+         include/rain/render/render_types.hpp
+         include/rain/render/render_command_2d.hpp
+         include/rain/render/render_queue_2d.hpp
++        include/rain/render/bounds_3d.hpp
++        include/rain/render/frustum_culling_3d.hpp
+         include/rain/render/camera_3d.hpp
+         include/rain/render/directional_light_3d_component.hpp
+         include/rain/render/material_3d.hpp
+--- a/engine/core/include/rain/core/math/mat4.hpp
++++ b/engine/core/include/rain/core/math/mat4.hpp
+@@ -3,6 +3,7 @@
+ #include<rain/core/math/simd_vec3.hpp>
+ #include<rain/core/types.hpp>
+ 
++#include<algorithm>
+ #include<cmath>
+ 
+ namespace rain {
+@@ -145,7 +146,7 @@
+ 
+ 			return result;
+ 		}
+-		
++
+ 
+ 		[[nodiscard]] inline vec3 forward_from_euler(vec3 rotation) {
+ 			const f32 pitch_cosine = std::cos(rotation.x);
+@@ -228,12 +229,12 @@
+ 				point.y * matrix.values[1][1] +
+ 				point.z * matrix.values[2][1] +
+ 				matrix.values[3][1];
+-			
++
+ 			const f32 z = point.x * matrix.values[0][2] +
+ 				point.y * matrix.values[1][2] +
+ 				point.z * matrix.values[2][2] +
+ 				matrix.values[3][2];
+-			
++
+ 			const f32 w = point.x * matrix.values[0][3] +
+ 				point.y * matrix.values[1][3] +
+ 				point.z * matrix.values[2][3] +
+@@ -253,7 +254,7 @@
+ 			const vec3 axis_y{ matrix.values[1][0],matrix.values[1][1],matrix.values[1][2] };
+ 
+ 			const vec3 axis_z{ matrix.values[2][0],matrix.values[2][1],matrix.values[2][2] };
+-		
++
+ 			return std::max(length(axis_x), std::max(length(axis_y), length(axis_z)));
+ 		}
+ }
+--- a/engine/render/src/render_system_3d.cpp
++++ b/engine/render/src/render_system_3d.cpp
+@@ -1,9 +1,11 @@
+ #include <rain/render/render_system_3d.hpp>
+ #include <rain/render/mesh_3d_shader_source.hpp>
++#include <rain/render/frustum_culling_3d.hpp>
+ #include <rain/runtime/world_transform_3d_component.hpp>
+ 
+ #include <algorithm>
+ #include <cstddef>
++#include <cmath>
+ 
+ namespace rain {
+     namespace {
+@@ -45,6 +47,23 @@
+             return result;
+         }
+ 
++        f32 unit_factor(f32 value, f32 fallback) {
++            return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
++        }
++
++        usize blend_index(render_blend_mode mode) {
++            if (mode == render_blend_mode::alpha) return 1;
++            if (mode == render_blend_mode::additive) return 2;
++            return 0;
++        }
++
++        bool has_mirrored_winding(const mat4& matrix) {
++            const auto& m = matrix.values;
++            return dot(cross(vec3{m[0][0], m[0][1], m[0][2]},
++                             vec3{m[1][0], m[1][1], m[1][2]}),
++                             vec3{m[2][0], m[2][1], m[2][2]}) < 0.0f;
++        }
++
+         vec4 multiply_color(vec4 lhs, vec4 rhs) {
+             return {lhs.x * rhs.x, lhs.y * rhs.y, lhs.z * rhs.z, lhs.w * rhs.w};
+         }
+@@ -60,17 +79,21 @@
+             .pixel_source = detail::mesh_3d_shader_source,
+             .pixel_entry = "pixel_main"
+         });
+-        pipeline_ = backend_->create_pipeline_state({
+-            .name = "pipeline.mesh_3d", .shader = shader_,
+-            .vertex_attributes = {
+-                {"POSITION", 0, vertex_attribute_format::r32g32b32_float, 0, static_cast<u32>(offsetof(mesh_vertex_3d, position))},
+-                {"NORMAL", 0, vertex_attribute_format::r32g32b32_float, 0, static_cast<u32>(offsetof(mesh_vertex_3d, normal))},
+-                {"TEXCOORD", 0, vertex_attribute_format::r32g32_float, 0, static_cast<u32>(offsetof(mesh_vertex_3d, uv))}
+-            },
+-            .topology = primitive_topology::triangle_list, .blend_mode = render_blend_mode::opaque,
+-            .cull_mode = render_cull_mode::back, .front_counter_clockwise = false,
+-            .depth_test_enabled = true, .depth_write_enabled = true
+-        });
++        for (usize blend = 0; blend < 3; ++blend)
++        for (usize double_sided = 0; double_sided < 2; ++double_sided)
++        for (usize mirrored = 0; mirrored < 2; ++mirrored) {
++            pipelines_[blend][double_sided][mirrored] = backend_->create_pipeline_state({
++                .name = "pipeline.mesh_3d." + std::to_string(blend) + "." + std::to_string(double_sided) + "." + std::to_string(mirrored), .shader = shader_,
++                .vertex_attributes = {
++                    {"POSITION", 0, vertex_attribute_format::r32g32b32_float, 0, static_cast<u32>(offsetof(mesh_vertex_3d, position))},
++                    {"NORMAL", 0, vertex_attribute_format::r32g32b32_float, 0, static_cast<u32>(offsetof(mesh_vertex_3d, normal))},
++                    {"TEXCOORD", 0, vertex_attribute_format::r32g32_float, 0, static_cast<u32>(offsetof(mesh_vertex_3d, uv))}
++                },
++                .topology = primitive_topology::triangle_list, .blend_mode = static_cast<render_blend_mode>(blend),
++                .cull_mode = double_sided ? render_cull_mode::none : render_cull_mode::back, .front_counter_clockwise = mirrored != 0,
++                .depth_test_enabled = true, .depth_write_enabled = blend == 0, .srgb_write_enabled = true
++            });
++        }
+         object_constants_ = backend_->create_constant_buffer({
+             .name = "buffer.mesh_3d.object_constants", .bind = render_buffer_bind::constant_buffer,
+             .usage = render_buffer_usage::dynamic, .size_bytes = sizeof(object_constants_3d), .stride_bytes = sizeof(vec4)
+@@ -90,7 +113,9 @@
+         backend_->destroy_render_buffer(material_constants_);
+         backend_->destroy_render_buffer(scene_constants_);
+         backend_->destroy_render_buffer(object_constants_);
+-        backend_->destroy_pipeline_state(pipeline_);
++        for (auto& blend : pipelines_)
++            for (auto& side : blend)
++                for (auto pipeline : side) backend_->destroy_pipeline_state(pipeline);
+         backend_->destroy_shader_program(shader_);
+     }
+ 
+@@ -110,56 +135,69 @@
+     }
+ 
+     void render_system_3d::prepare(world& target_world) {
+-        stats_ = {};
+-        commands_.clear();
++        clear();
+         const entity_query_result cameras = target_world.query_entities(camera_query_);
+-        if (cameras.empty() || backend_->height() == 0) { has_camera_ = false; return; }
++        if (cameras.empty() || backend_->height() == 0 || backend_->width() == 0) { has_camera_ = false; return; }
+         const entity_id camera_entity = cameras.entities.front();
+         const auto& camera_transform = target_world.get_component<world_transform_3d_component>(camera_entity);
+         const auto& camera = target_world.get_component<camera_3d_component>(camera_entity);
+         const f32 aspect_ratio = static_cast<f32>(backend_->width()) / static_cast<f32>(backend_->height());
++        if (!std::isfinite(camera.vertical_fov_radians) || camera.vertical_fov_radians <= 0.0f ||
++            camera.vertical_fov_radians >= 3.14159265f || !std::isfinite(camera.near_plane) ||
++            !std::isfinite(camera.far_plane) || camera.near_plane <= 0.0f ||
++            camera.far_plane <= camera.near_plane) return;
+         camera_frame_ = build_camera_frame(camera_transform, camera, aspect_ratio);
+         has_camera_ = true;
+         const entity_query_result lights = target_world.query_entities(light_query_);
+         light_ = lights.empty() ? directional_light_3d_component{} : target_world.get_component<directional_light_3d_component>(lights.entities.front());
++        const camera_frustum_3d frustum = extract_camera_frustum(camera_frame_.view_projection);
+         u64 submission_index = 0;
+-        int renderable_count = 0;
+         for (entity_id entity : target_world.query_entities(render_query_)) {
+-            renderable_count++;
++            if (target_world.has_tag_in_hierarchy(entity, tag_id{"render.hidden"})) continue;
+             const auto& transform = target_world.get_component<world_transform_3d_component>(entity);
+-            const auto& mesh = target_world.get_component<mesh_3d_component>(entity);
+-            const vec3 difference = transform.position - camera_frame_.position;
+-
+-            if (target_world.has_tag_in_hierarchy(entity, tag_id{ "render.hidden" }))continue;
+-
+-            const bool use_frustum_culling = target_world.has_tag(entity, tag_id{ "render.frustum_cull" });
+-            const bool always_visible = target_world.has_tag(entity, tag_id{ "render.always_visible" });
+-
+-            if (use_frustum_culling && !always_visible) {
+-                const bounding_sphere_3d world_bounds = transform_bounding_sphere(mesh->local_bounds, transform.matrix);
+-
+-                if (!sphere_inside_camera_frustum(world_bounds, camera_frame_)) {
+-                    ++stats_.culled_count;
+-                    continue;
+-                }
++            const auto& component = target_world.get_component<mesh_3d_component>(entity);
++            const mesh_3d* mesh = meshes_->try_get(component.mesh);
++            if (mesh == nullptr) continue;
++            ++stats_.candidate_count;
++
++            const bool use_frustum_culling =
++                target_world.has_tag_in_hierarchy(entity, tag_id{"render.frustum_cull"});
++            const bool always_visible =
++                target_world.has_tag_in_hierarchy(entity, tag_id{"render.always_visible"});
++            const bounding_sphere_3d world_bounds = transform_bounding_sphere(mesh->local_bounds, transform.matrix);
++            if (use_frustum_culling && !always_visible &&
++                !sphere_inside_camera_frustum(world_bounds, frustum)) {
++                ++stats_.culled_count;
++                continue;
+             }
+ 
+-            const vec3 difference = transform.position - camera_frame_.position;
+-            stats_.visible_count++;
+-            commands_.push_back({.source_entity = entity, .world_matrix = transform.matrix, .mesh = mesh.mesh, .material = mesh.material, .tint = mesh.tint, .camera_distance_squared = length_squared(difference), .layer = mesh.layer, .submission_index = submission_index++});
+-        }
+-
+-        stats_.candidate_count = static_cast<u32>(renderable_count);
++            const material_3d* material = materials_->try_get(component.material);
++            if (material == nullptr) material = materials_->try_get(materials_->default_material());
++            const vec3 difference = world_bounds.center - camera_frame_.position;
++            const f32 view_depth = transform_point(world_bounds.center, camera_frame_.view).z;
++            ++stats_.visible_count;
++            commands_.push_back({
++                .source_entity = entity, .world_matrix = transform.matrix,
++                .mesh = component.mesh, .material = component.material, .tint = component.tint,
++                .camera_distance_squared = length_squared(difference),
++                .layer = component.layer, .submission_index = submission_index++,
++                .camera_view_depth = std::isfinite(view_depth) ? view_depth : 0.0f,
++                .blend_mode = material ? material->blend_mode : render_blend_mode::opaque
++            });
++        }
+ 
+         std::stable_sort(commands_.begin(), commands_.end(), [](const render_command_3d& lhs, const render_command_3d& rhs) {
+             if (lhs.layer != rhs.layer) return lhs.layer < rhs.layer;
+-            return lhs.camera_distance_squared < rhs.camera_distance_squared;
++            const bool lhs_transparent = lhs.blend_mode != render_blend_mode::opaque;
++            const bool rhs_transparent = rhs.blend_mode != render_blend_mode::opaque;
++            if (lhs_transparent != rhs_transparent) return !lhs_transparent;
++            return lhs_transparent ? lhs.camera_view_depth > rhs.camera_view_depth
++                                   : lhs.camera_view_depth < rhs.camera_view_depth;
+         });
+     }
+ 
+     void render_system_3d::submit() {
+         if (!has_camera_) return;
+-        backend_->set_pipeline_state(pipeline_);
+         const scene_constants_3d scene{
+             .light_direction = {light_.direction.x, light_.direction.y, light_.direction.z, 0.0f},
+             .light_color = {light_.color.x * light_.intensity, light_.color.y * light_.intensity, light_.color.z * light_.intensity, 1.0f},
+@@ -176,22 +214,36 @@
+             const material_3d* material = materials_->try_get(command.material);
+             if (material == nullptr) material = materials_->try_get(materials_->default_material());
+             if (material == nullptr) continue;
++            backend_->set_pipeline_state(pipelines_[blend_index(command.blend_mode)]
++                [material->double_sided ? 1 : 0][has_mirrored_winding(command.world_matrix) ? 1 : 0]);
+             const bool has_texture = backend_->is_valid(material->albedo_texture);
+             const object_constants_3d object{.world_matrix = command.world_matrix, .world_view_projection = command.world_matrix * camera_frame_.view_projection,.normal_matrix = make_normal_matrix(command.world_matrix)};
+-            const material_constants_3d material_data{.base_color = multiply_color(material->base_color, command.tint), .material_options = {has_texture ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f}};
+-            
++            const f32 cutoff = std::isfinite(material->alpha_cutoff) && material->alpha_cutoff >= 0.0f
++                ? std::clamp(material->alpha_cutoff, 0.0f, 1.0f) : -1.0f;
++            const material_constants_3d material_data{
++                .base_color = multiply_color(material->base_color, command.tint),
++                .material_parameters = {unit_factor(material->metallic_factor, 0.0f),
++                    unit_factor(material->roughness_factor, 1.0f), cutoff,
++                    material->albedo_manual_srgb_decode ? 1.0f : 0.0f},
++                .material_options = {has_texture ? 1.0f : 0.0f,
++                    backend_->is_valid(material->metallic_roughness_texture) ? 1.0f : 0.0f,
++                    command.blend_mode != render_blend_mode::opaque ? 1.0f : 0.0f,
++                    material->double_sided ? 1.0f : 0.0f}
++            };
++
+             backend_->update_buffer(object_constants_, &object, sizeof(object));
+             backend_->update_buffer(material_constants_, &material_data, sizeof(material_data));
+             backend_->set_vertex_constant_buffer(object_constants_, 0);
+             backend_->set_pixel_constant_buffer(material_constants_, 2);
+             backend_->set_texture_2d(material->albedo_texture, 0);
++            backend_->set_texture_2d(material->metallic_roughness_texture, 1);
+             backend_->set_vertex_buffer(mesh->vertex_buffer, 0);
+             backend_->set_index_buffer(mesh->index_buffer, render_index_format::uint32);
+             backend_->draw_indexed(mesh->index_count, 0, 0);
+         }
+     }
+ 
+-    void render_system_3d::clear() { commands_.clear(); has_camera_ = false; }
++    void render_system_3d::clear() { commands_.clear(); has_camera_ = false; stats_ = {}; }
+     usize render_system_3d::command_count() const { return commands_.size(); }
+ 
+     void render_prepare_system_3d(system_context& context, void* user_data) {
+--- a/engine/render/shaders/mesh_3d.hlsl
++++ b/engine/render/shaders/mesh_3d.hlsl
+@@ -5,25 +5,26 @@
+     row_major float4x4 normal_matrix;
+ };
+ 
+-cbuffer SceneConstant : register(b1)
++cbuffer SceneConstants : register(b1)
+ {
+     float4 light_direction;
+     float4 light_color;
+     float4 ambient_color;
+     float4 camera_position;
+-}
++};
+ 
+-cbuffer MaterialConstant : register(b2)
++cbuffer MaterialConstants : register(b2)
+ {
+-    float4 base_color;
+-    float4 material_parameters;
+-    float4 material_options;
+-}
++    float4 base_color;          // Linear RGB, linear alpha.
++    float4 material_parameters; // Metallic, roughness, alpha cutoff, manual sRGB decode.
++    float4 material_options;    // Albedo map, MR map, blended, double sided.
++};
+ 
+ Texture2D albedo_texture : register(t0);
+-texture2D metallic_roughness_texture : register(t1);
++Texture2D metallic_roughness_texture : register(t1);
++SamplerState material_sampler : register(s0);
+ 
+-SamplerState albedo_sampler : register(s0);
++static const float PI = 3.14159265359f;
+ 
+ struct VertexInput
+ {
+@@ -38,139 +39,93 @@
+     float3 world_position : POSITION1;
+     float3 normal : NORMAL;
+     float2 uv : TEXCOORD;
+-    
+ };
++
++float3 safe_normalize(float3 value, float3 fallback)
++{
++    float magnitude_squared = dot(value, value);
++    return magnitude_squared > 1.0e-12f ? value * rsqrt(max(magnitude_squared, 1.0e-12f)) : fallback;
++}
+ 
+ VertexOutput vertex_main(VertexInput input)
+ {
+     VertexOutput output;
+     float4 local_position = float4(input.position, 1.0f);
+-    
+-    float4 world_position = mul(local_position, world_matrix);
+-    
+     output.position = mul(local_position, world_view_projection);
+-    
+-    output.world_position = world_position.xyz;
+-    
+-    output.normal = normalize(mul(float4(input.normal, 0.0f), normal_matrix).xyz);
+-    
++    output.world_position = mul(local_position, world_matrix).xyz;
++    output.normal = mul(float4(input.normal, 0.0f), normal_matrix).xyz;
+     output.uv = input.uv;
+-    
+     return output;
+-
+ }
+ 
+-float distribution_ggx(float3 normal, float3 halfway, float roughness)
++float3 srgb_to_linear(float3 color)
+ {
+-    const float alpha = roughness * roughness;
+-    const float alpha_squared = alpha * alpha;
+-    
+-    const float normal_dot_halfway = max(dot(normal, halfway), 0.0f);
+-    const float normal_dot_halfway_squared = normal_dot_halfway * normal_dot_halfway;
+-    
+-    float denominator = normal_dot_halfway_squared * (alpha_squared - 1.0f) + 1.0f;
+-    denominator = PI * denominator * denominator;
+-    
+-    return alpha_squared / max(denominator, 0.000001f);
++    return float3(color.r <= 0.04045f ? color.r / 12.92f : pow(abs((color.r + 0.055f) / 1.055f), 2.4f),
++                  color.g <= 0.04045f ? color.g / 12.92f : pow(abs((color.g + 0.055f) / 1.055f), 2.4f),
++                  color.b <= 0.04045f ? color.b / 12.92f : pow(abs((color.b + 0.055f) / 1.055f), 2.4f));
++}
+ 
++float distribution_ggx(float normal_dot_halfway, float roughness)
++{
++    float alpha = roughness * roughness;
++    float alpha_squared = alpha * alpha;
++    float nh_squared = normal_dot_halfway * normal_dot_halfway;
++    // This form avoids cancellation when roughness and the highlight angle are small.
++    float denominator = (1.0f - nh_squared) + nh_squared * alpha_squared;
++    return alpha_squared / max(PI * denominator * denominator, 1.0e-12f);
+ }
+ 
+ float geometry_schlick_ggx(float normal_dot_direction, float roughness)
+ {
+-    const float value = roughness + 1.0f;
+-    const float k = (value * value) / 8.0f;
+-    
+-    return normal_dot_direction / (normal_dot_direction * (1.0f - k) + k);
+-
+-}
+-
+-
+-float geometry_smith(float3 normal, float view_direction, float3 light_direction_value, float roughness)
+-{
+-    const float normal_dot_view = max(dot(normal, view_direction), 0.0f);
+-    
+-    const float normal_dot_light = max(dot(normal, light_direction_value), 0.0f);
+-    
+-    const float geometry_view = geometry_schlick_ggx(normal_dot_view, roughness);
+-    
+-    const float geometry_light = geometry_schlick_ggx(normal_dot_light, roughness);
+-    
+-    return geometry_view * geometry_light;
++    float k = (roughness + 1.0f) * (roughness + 1.0f) / 8.0f;
++    return normal_dot_direction / max(normal_dot_direction * (1.0f - k) + k, 1.0e-6f);
+ }
+ 
+ float3 fresnel_schlick(float cosine_theta, float3 f0)
+ {
+-    return f0 + (1.0f - f0) * pow(saturate(1.0f - cosine_theta), 5.0f);
+-
++    return f0 + (1.0f - f0) * pow(1.0f - saturate(cosine_theta), 5.0f);
+ }
+ 
+-float4 pixel_main(VertexOutput input) : SV_Target{
++float4 pixel_main(VertexOutput input, bool front_face : SV_IsFrontFace) : SV_Target
++{
+     float4 albedo = base_color;
+-    
+-    if (material_options.x > 0.5f)
+-    {
+-        albedo *= albedo_texture.Sample(material_sampler,input.uv);
++    if (material_options.x > 0.5f) {
++        float4 sampled = albedo_texture.Sample(material_sampler, input.uv);
++        if (material_parameters.w > 0.5f) sampled.rgb = srgb_to_linear(sampled.rgb);
++        albedo *= sampled;
++    }
++    albedo = saturate(albedo);
++    if (material_parameters.z >= 0.0f) clip(albedo.a - material_parameters.z);
+ 
++    float metallic = material_parameters.x;
++    float roughness = material_parameters.y;
++    if (material_options.y > 0.5f) {
++        float4 mr = metallic_roughness_texture.Sample(material_sampler, input.uv);
++        roughness *= mr.g;
++        metallic *= mr.b;
+     }
+-    
+-    if (material_parameters.z >= 0.0f)
+-    {
+-        clip(albedo.a-material_parameters.z);
+-    }
+-    
+-    float metallic = saturate(material_parameters.x);
+-    
+-    float roughness = clamp(material_parameters.y, 0.04f, 1.0f);
+-    
+-    if (material_options.y > 0.5f)
+-    {
+-        const float4 metallic_roughness = metallic_roughness_texture.Sample(material_sampler, input.uv);
+-        roughness *= metallic_roughness.g;
+-        metallic *= metallic_roughness.b;
+-        
+-        roughness = clamp(roughness,0.04f,1.0f);
++    metallic = saturate(metallic);
++    roughness = clamp(roughness, 0.04f, 1.0f);
+ 
+-        metallic = saturate(metallic);
+-
+-    }
+-    
+-    const float3 normal = normalize(input.normal);
+-    
+-    const float3 view_direction = normalize(camera_position.xyz - input.world_position);
+-    
+-    const float3 light_direction_value = normalize(-light_direction.xyz);
+-    const float3 halfway = normalize(view_direction + light_direction_value);
+-    const float3 dielectric_f0 = float3(0.04f,0.04f,0.04f);
+-    
+-    const float3 f0 = lerp(dielectric_f0, albedo.rgb, metallic);
+-    
+-    const float normal_distribution = distribution_ggx(normal, halfway, roughness);
+-    const float geometry = geometry_smith(normal, view_direction, light_direction_value, roughness);
+-    const float3 fresnel = fresnel_schlick(max(dot(halfway, view_direction), 0.0f), f0);
+-    
+-    const float normal_dot_view = max(dot(normal, view_direction), 0.0f);
+-    
+-    const float normal_dot_light = max(dot(normal, light_direction_value), 0.0f);
+-    
+-    const float3 numerator = normal_distribution * geometry * fresnel;
+-    
+-    const float4 denominator = max(4.0f * normal_dot_view * normal_dot_light, 0.0001f);
+-    
+-    const float3 specular = numerator / denominator;
+-    
+-    const float3 ks = fresnel;
+-    
+-    const float3 kd = 1.0f - ks;
+-    
+-    kd *= 1.0f - metallic;
+-    
+-    const float3 direct_lighting = (kd * albedo.rgb / PI + specular) * light_color.rgb * normal_dot_light;
+-    
+-    const float3 ambient = ambient_color.rgb * albedo.rgb * (1.0f - metallic * 0.5f);
+-    
+-    const float3 final_color = direct_lighting + ambient;
+-    return float4(final_color, albedo.a);
+-    
+-    
++    float3 normal = safe_normalize(input.normal, float3(0, 1, 0));
++    if (material_options.w > 0.5f && !front_face) normal = -normal;
++    float3 view_direction = safe_normalize(camera_position.xyz - input.world_position, normal);
++    // A disabled/zero direction contributes no directional lighting.
++    float3 light = safe_normalize(-light_direction.xyz, float3(0, 0, 0));
++    float3 halfway = safe_normalize(view_direction + light, normal);
++    float nv = saturate(dot(normal, view_direction));
++    float nl = saturate(dot(normal, light));
++    float3 f0 = lerp(float3(0.04f, 0.04f, 0.04f), albedo.rgb, metallic);
++    float3 fresnel = fresnel_schlick(dot(halfway, view_direction), f0);
++    float distribution = distribution_ggx(saturate(dot(normal, halfway)), roughness);
++    float geometry = geometry_schlick_ggx(nv, roughness) * geometry_schlick_ggx(nl, roughness);
++    float3 specular = distribution * geometry * fresnel / max(4.0f * nv * nl, 1.0e-6f);
++    float3 diffuse_weight = (1.0f - fresnel) * (1.0f - metallic);
++    float3 direct = (diffuse_weight * albedo.rgb / PI + specular) * max(light_color.rgb, 0.0f) * nl;
++    // Diffuse ambient approximation; environment specular needs a future IBL pass.
++    float3 ambient = max(ambient_color.rgb, 0.0f) * albedo.rgb * (1.0f - metallic);
++    float3 radiance = max(direct + ambient, 0.0f);
++    float3 mapped = radiance / (radiance + 1.0f);
++    // The 3D pipeline writes through an sRGB RTV; blending happens in linear space.
++    return float4(mapped, material_options.z > 0.5f ? albedo.a : 1.0f);
+ }
+-
+--- a/engine/render/include/rain/render/render_resource_desc.hpp
++++ b/engine/render/include/rain/render/render_resource_desc.hpp
+@@ -14,7 +14,8 @@
+ 	};
+ 
+ 	enum class texture_format {
+-		rgba8_unorm
++		rgba8_unorm,
++        rgba8_unorm_srgb
+ 	};
+ 
+ 	struct texture_2d_desc {
+@@ -96,6 +97,8 @@
+ 		bool depth_test_enabled = false;
+ 		bool depth_write_enabled = false;
+ 
+-		render_compare_operation depth_compare = render_compare_operation::less_equal;
++        render_compare_operation depth_compare = render_compare_operation::less_equal;
++        // Linear shader output, hardware sRGB encode and linear-space blending.
++        bool srgb_write_enabled = false;
+ 	};
+ }--- a/engine/render/src/d3d11/d3d11_render_backend.cpp
++++ b/engine/render/src/d3d11/d3d11_render_backend.cpp
+@@ -87,6 +87,8 @@
+ 			switch (format) {
+ 			case texture_format::rgba8_unorm:
+ 					return DXGI_FORMAT_R8G8B8A8_UNORM;
++            case texture_format::rgba8_unorm_srgb:
++                return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+ 
+ 			}
+ 
+@@ -218,6 +220,7 @@
+ 			device_context_->OMSetRenderTargets(0, nullptr, nullptr);
+ 		}
+ 
++		release_com(srgb_render_target_view_);
+ 		release_com(render_target_view_);
+ 
+ 		const HRESULT resize_result = swap_chain_->ResizeBuffers(0, static_cast<UINT>(width_), static_cast<UINT>(height_), DXGI_FORMAT_UNKNOWN, 0);
+@@ -527,6 +530,7 @@
+ 		pipeline.shader = desc.shader;
+ 		pipeline.topology = desc.topology;
+ 		pipeline.blend_mode = desc.blend_mode;
++        pipeline.srgb_write_enabled = desc.srgb_write_enabled;
+ 
+ 		create_blend_state(desc.blend_mode, &pipeline.blend_state);
+ 
+@@ -681,7 +685,11 @@
+ 
+ 		constexpr float blend_factor[4]{0.0f, 0.0f, 0.0f, 0.0f};
+ 
+-		device_context_->RSSetState(pipeline->rasterizer_state);
++        ID3D11RenderTargetView* target = pipeline->srgb_write_enabled
++            ? srgb_render_target_view_ : render_target_view_;
++        // clear() binds the color target alone, so restore depth for every draw pipeline.
++        device_context_->OMSetRenderTargets(1, &target, depth_stencil_view_);
++        device_context_->RSSetState(pipeline->rasterizer_state);
+ 
+ 		device_context_->OMSetDepthStencilState(pipeline->depth_stencil_state,0);
+ 
+@@ -755,8 +763,11 @@
+ 		flush_resource_destruction();
+ 
+ 		release_render_resources();
+-
+-
++        release_com(depth_stencil_view_);
++        release_com(depth_texture_);
++
++
++		release_com(srgb_render_target_view_);
+ 		release_com(render_target_view_);
+ 		release_com(swap_chain_);
+ 		release_com(device_context_);
+@@ -994,7 +1005,14 @@
+ 
+ 		const HRESULT create_rtv_result = device_->CreateRenderTargetView(back_buffer, nullptr, &render_target_view_);
+ 
+-		release_com(back_buffer);
++        D3D11_RENDER_TARGET_VIEW_DESC srgb_desc{};
++        srgb_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
++        srgb_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
++        const HRESULT srgb_result = device_->CreateRenderTargetView(
++            back_buffer, &srgb_desc, &srgb_render_target_view_);
++        rain_assert(!FAILED(srgb_result));
++
++        release_com(back_buffer);
+ 
+ 		rain_assert(!FAILED(create_rtv_result));
+ 		rain_assert(render_target_view_ != nullptr);
+--- a/engine/asset/include/rain/asset/texture_asset_registry.hpp
++++ b/engine/asset/include/rain/asset/texture_asset_registry.hpp
+@@ -14,6 +14,7 @@
+ 		std::string path;
+ 		texture_2d_handle handle;
+ 		bool loaded = false;
++        texture_format format = texture_format::rgba8_unorm;
+ 
+ 	};
+ 
+@@ -27,11 +28,11 @@
+ 		texture_asset_registry(const texture_asset_registry&) = delete;
+ 		texture_asset_registry&operator =(const texture_asset_registry&)=delete;
+ 
+-		[[nodiscard]] texture_2d_handle load_texture_2d(const char* path);
++		[[nodiscard]] texture_2d_handle load_texture_2d(const char* path, texture_format format = texture_format::rgba8_unorm);
+ 
+ 		[[nodiscard]] bool is_loaded(asset_id id)const;
+ 
+-		bool unload_texture_2d(const char* path);
++		bool unload_texture_2d(const char* path, texture_format format = texture_format::rgba8_unorm);
+ 		bool unload_texture_2d(asset_id id);
+ 
+ 		[[nodiscard]] texture_2d_handle find_texture(asset_id id)const;
+--- a/engine/asset/src/texture_asset_registry.cpp
++++ b/engine/asset/src/texture_asset_registry.cpp
+@@ -5,6 +5,14 @@
+ #include<rain/render/render_resource_desc.hpp>
+ 
+ namespace rain {
++    namespace {
++        asset_id texture_cache_id(const char* path, texture_format format) {
++            // Preserve the legacy ID for linear textures used by 2D callers.
++            return format == texture_format::rgba8_unorm ? asset_id{path}
++                : asset_id{(std::string{path} + "#rain.texture.srgb").c_str()};
++        }
++    }
++
+     texture_asset_registry::texture_asset_registry(render_backend& renderer)
+         : renderer_(&renderer)
+     {
+@@ -14,13 +22,13 @@
+         clear_cache();
+     }
+ 
+-    texture_2d_handle texture_asset_registry::load_texture_2d(const char* path) {
++    texture_2d_handle texture_asset_registry::load_texture_2d(const char* path, texture_format format) {
+         if (path == nullptr) {
+             rain::log_error("texture_asset_registry::failed path is null");
+             return texture_2d_handle{};
+         }
+ 
+-        const asset_id id(path);
++        const asset_id id = texture_cache_id(path, format);
+ 
+         if (!id.is_valid()) {
+             rain::log_error("asset registry failed: id invalid");
+@@ -40,7 +48,8 @@
+                 .id = id,
+                 .path = path,
+                 .handle = texture_2d_handle{},
+-                .loaded = false
++                .loaded = false,
++                .format = format
+                 });
+             return texture_2d_handle{};
+         }
+@@ -49,7 +58,7 @@
+             .name = image.source_path,
+             .width = image.width,
+             .height = image.height,
+-            .format = texture_format::rgba8_unorm,
++            .format = format,
+             .pixels = image.pixels.data(),
+             .size_bytes = image.size_bytes()
+             });
+@@ -60,7 +69,8 @@
+             .id = id,
+             .path = image.source_path,
+             .handle = texture,
+-            .loaded = texture.is_valid()
++            .loaded = texture.is_valid(),
++                .format = format
+             });
+ 
+ 
+@@ -75,12 +85,12 @@
+     }
+ 
+ 
+-    bool texture_asset_registry::unload_texture_2d(const char* path) {
++    bool texture_asset_registry::unload_texture_2d(const char* path, texture_format format) {
+         if (path == nullptr) {
+             return false;
+         }
+ 
+-        return unload_texture_2d(asset_id{path});
++        return unload_texture_2d(texture_cache_id(path, format));
+     }
+ 
+     bool texture_asset_registry::unload_texture_2d(asset_id id) {
+--- a/engine/asset/src/gltf_model_3d.cpp
++++ b/engine/asset/src/gltf_model_3d.cpp
+@@ -221,59 +221,56 @@
+             });
+         }
+ 
++        [[nodiscard]] texture_2d_handle import_material_texture(
++            const cgltf_texture_view& view, const std::filesystem::path& directory,
++            texture_asset_registry& textures, texture_format format) {
++            if (view.texture == nullptr) return {};
++            if (view.texcoord != 0 || view.has_transform) {
++                log_warning("glTF material texture requires unsupported UV set/transform; using factors");
++                return {};
++            }
++            const cgltf_image* image = view.texture->image;
++            if (image == nullptr || image->uri == nullptr ||
++                std::string{image->uri}.starts_with("data:")) {
++                log_warning("glTF embedded material image is unsupported; using factors");
++                return {};
++            }
++            // glTF external image URIs may contain percent-escaped path characters.
++            std::string uri = image->uri;
++            uri.resize(cgltf_decode_uri(uri.data()));
++            const std::string path = (directory / uri).lexically_normal().generic_string();
++            return textures.load_texture_2d(path.c_str(), format);
++        }
++
+         [[nodiscard]] material_3d_handle import_material(
+             const cgltf_material* source_material,
+             const std::filesystem::path& model_directory,
+-            material_3d_registry& materials,
+-            texture_asset_registry& textures
+-        ) {
+-            if (source_material == nullptr) {
+-                return materials.default_material();
+-            }
+-
++            material_3d_registry& materials, texture_asset_registry& textures) {
+             material_3d_desc desc{};
+-            desc.name = source_material->name != nullptr
+-                ? source_material->name
+-                : "gltf.material";
++            desc.name = source_material && source_material->name
++                ? source_material->name : "gltf.material.default";
++            // glTF's omitted metallic/roughness factors both default to one.
++            desc.metallic_factor = 1.0f;
++            desc.roughness_factor = 1.0f;
++            desc.albedo_manual_srgb_decode = false;
++            if (source_material == nullptr) return materials.create(desc);
+ 
+             if (source_material->has_pbr_metallic_roughness) {
+-                const cgltf_pbr_metallic_roughness& pbr =
+-                    source_material->pbr_metallic_roughness;
+-
+-                desc.base_color = {
+-                    pbr.base_color_factor[0],
+-                    pbr.base_color_factor[1],
+-                    pbr.base_color_factor[2],
+-                    pbr.base_color_factor[3]
+-                };
+-
+-                const cgltf_texture_view& texture_view =
+-                    pbr.base_color_texture;
+-                if (texture_view.texture != nullptr &&
+-                    texture_view.texture->image != nullptr) {
+-                    const cgltf_image* image = texture_view.texture->image;
+-                    if (image->uri != nullptr && image->uri[0] != '\0') {
+-                        const std::string image_path =
+-                            (model_directory / image->uri)
+-                                .lexically_normal()
+-                                .generic_string();
+-                        desc.albedo_texture =
+-                            textures.load_texture_2d(image_path.c_str());
+-                    }
+-                }
+-            }
+-
+-            switch (source_material->alpha_mode) {
+-            case cgltf_alpha_mode_blend:
++                const auto& pbr = source_material->pbr_metallic_roughness;
++                desc.base_color = {pbr.base_color_factor[0], pbr.base_color_factor[1],
++                                   pbr.base_color_factor[2], pbr.base_color_factor[3]};
++                desc.metallic_factor = pbr.metallic_factor;
++                desc.roughness_factor = pbr.roughness_factor;
++                desc.albedo_texture = import_material_texture(pbr.base_color_texture,
++                    model_directory, textures, texture_format::rgba8_unorm_srgb);
++                desc.metallic_roughness_texture = import_material_texture(pbr.metallic_roughness_texture,
++                    model_directory, textures, texture_format::rgba8_unorm);
++            }
++            desc.double_sided = source_material->double_sided != 0;
++            if (source_material->alpha_mode == cgltf_alpha_mode_blend)
+                 desc.blend_mode = render_blend_mode::alpha;
+-                break;
+-            case cgltf_alpha_mode_mask:
+-            case cgltf_alpha_mode_opaque:
+-            case cgltf_alpha_mode_max_enum:
+-                desc.blend_mode = render_blend_mode::opaque;
+-                break;
+-            }
+-
++            else if (source_material->alpha_mode == cgltf_alpha_mode_mask)
++                desc.alpha_cutoff = source_material->alpha_cutoff;
+             return materials.create(desc);
+         }
+ 
+@@ -308,8 +305,7 @@
+                 *context.textures
+             );
+ 
+-            if (material != nullptr &&
+-                result != context.materials->default_material()) {
++            if (result != context.materials->default_material()) {
+                 context.material_cache.emplace_back(material, result);
+                 context.instance->owned_materials.push_back(result);
+             }
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -25,7 +25,8 @@
+     add_subdirectory(samples)
+ endif()
+ 
+-# if(rain_build_tests)
+-#     add_subdirectory(tests)
+-# endif()
++if(rain_build_tests)
++    enable_testing()
++    add_subdirectory(tests)
++endif()
+ 
+--- /dev/null
++++ b/tests/CMakeLists.txt
+@@ -0,0 +1,7 @@
++add_executable(rain_3d_tests render_3d_tests.cpp pbr_shader_tests.cpp)
++target_link_libraries(rain_3d_tests PRIVATE rain_asset d3d11 d3dcompiler)
++target_include_directories(rain_3d_tests PRIVATE ${PROJECT_BINARY_DIR}/engine/render/generated)
++target_compile_features(rain_3d_tests PRIVATE cxx_std_20)
++rain_apply_common_options(rain_3d_tests)
++add_test(NAME rain_3d_regressions COMMAND rain_3d_tests)
++set_tests_properties(rain_3d_regressions PROPERTIES TIMEOUT 30)
+--- /dev/null
++++ b/tests/render_3d_tests.cpp
+@@ -0,0 +1,367 @@
++#include <rain/asset/gltf_model_3d.hpp>
++#include <rain/render/frustum_culling_3d.hpp>
++#include <rain/render/render_system_3d.hpp>
++#include <rain/runtime/transform_hierarchy_system_3d.hpp>
++#include <rain/runtime/world_transform_3d_component.hpp>
++
++#include <cmath>
++#include <cstring>
++#include <filesystem>
++#include <fstream>
++#include <iostream>
++#include <limits>
++#include <stdexcept>
++#include <vector>
++
++using namespace rain;
++#define CHECK(condition) do { if (!(condition)) throw std::runtime_error(     std::string{__func__} + ":" + std::to_string(__LINE__) + " " #condition); } while (false)
++
++void test_pbr_shader();
++
++namespace {
++struct recording_backend final : render_backend {
++    struct buffer { std::vector<unsigned char> bytes; };
++    handle_pool<render_buffer_handle_tag, buffer> buffers;
++    handle_pool<pipeline_state_handle_tag, pipeline_state_desc> pipelines;
++    handle_pool<texture_2d_handle_tag, texture_format> textures;
++    struct draw_record {
++        pipeline_state_desc pipeline;
++        std::vector<unsigned char> object, material;
++        texture_2d_handle albedo, mr;
++    };
++    std::vector<draw_record> draws;
++    pipeline_state_handle current_pipeline;
++    render_buffer_handle object_buffer, material_buffer;
++    texture_2d_handle bound[2]{};
++    u32 viewport_width = 1600, viewport_height = 900;
++    bool fail_index_buffer = false;
++
++    void begin_frame() override {}
++    void clear(const render_clear_color&) override {}
++    void clear_depth(f32) override {}
++    void draw_debug_triangle() override {}
++    void end_frame() override {}
++    void resize(u32 w, u32 h) override { viewport_width=w; viewport_height=h; }
++    u32 width() const override { return viewport_width; }
++    u32 height() const override { return viewport_height; }
++    shader_program_handle create_shader_program(const shader_program_desc&) override { return {0,0}; }
++    render_buffer_handle make_buffer(const render_buffer_desc& desc) {
++        buffer value{std::vector<unsigned char>(desc.size_bytes)};
++        if (desc.initial_data) std::memcpy(value.bytes.data(), desc.initial_data, desc.size_bytes);
++        return buffers.create(std::move(value));
++    }
++    render_buffer_handle create_vertex_buffer(const render_buffer_desc& desc) override { return make_buffer(desc); }
++    render_buffer_handle create_index_buffer(const render_buffer_desc& desc) override {
++        return fail_index_buffer ? render_buffer_handle{} : make_buffer(desc);
++    }
++    render_buffer_handle create_constant_buffer(const render_buffer_desc& desc) override { return make_buffer(desc); }
++    pipeline_state_handle create_pipeline_state(const pipeline_state_desc& desc) override { return pipelines.create(desc); }
++    texture_2d_handle create_texture_2d(const texture_2d_desc& desc) override { return textures.create(desc.format); }
++    bool destroy_shader_program(shader_program_handle) override { return true; }
++    bool destroy_render_buffer(render_buffer_handle h) override { return buffers.destroy(h); }
++    bool destroy_pipeline_state(pipeline_state_handle h) override { return pipelines.destroy(h); }
++    bool destroy_texture_2d(texture_2d_handle h) override { return textures.destroy(h); }
++    bool is_valid(shader_program_handle h) const override { return h.is_valid(); }
++    bool is_valid(render_buffer_handle h) const override { return buffers.is_valid(h); }
++    bool is_valid(pipeline_state_handle h) const override { return pipelines.is_valid(h); }
++    bool is_valid(texture_2d_handle h) const override { return textures.is_valid(h); }
++    void flush_resource_destruction() override {}
++    void set_pipeline_state(pipeline_state_handle h) override { current_pipeline=h; }
++    void set_vertex_buffer(render_buffer_handle) override {}
++    void set_vertex_buffer(render_buffer_handle, u32) override {}
++    void set_index_buffer(render_buffer_handle, render_index_format) override {}
++    void set_vertex_constant_buffer(render_buffer_handle h, u32 slot) override { if (slot==0) object_buffer=h; }
++    void set_pixel_constant_buffer(render_buffer_handle h, u32 slot) override { if (slot==2) material_buffer=h; }
++    void update_buffer(render_buffer_handle h, const void* data, usize size) override {
++        auto& bytes=buffers.get(h).bytes;
++        CHECK(bytes.size()==size);
++        std::memcpy(bytes.data(),data,size);
++    }
++    void set_texture_2d(texture_2d_handle h,u32 slot) override { if (slot<2) bound[slot]=h; }
++    void draw(u32,u32) override {}
++    void draw_indexed(u32,u32,i32) override {
++        draws.push_back({pipelines.get(current_pipeline),buffers.get(object_buffer).bytes,
++                         buffers.get(material_buffer).bytes,bound[0],bound[1]});
++    }
++};
++
++bool close(f32 a, f32 b, f32 tolerance=1.0e-4f) { return std::abs(a-b)<tolerance; }
++
++entity_id camera_entity(world& w) {
++    const auto e=w.create_entity({});
++    w.add_component<world_transform_3d_component>(e,world_transform_3d_component{});
++    w.add_component<camera_3d_component>(e,camera_3d_component{.near_plane=1.0f,.far_plane=50.0f});
++    w.add_tag(e,tag_id{"camera.3d"});
++    w.add_tag(e,tag_id{"camera.active"});
++    return e;
++}
++
++entity_id object_entity(world& w,mesh_3d_handle mesh,material_3d_handle material,vec3 position) {
++    const auto e=w.create_entity({});
++    w.add_component<world_transform_3d_component>(e,world_transform_3d_component{
++        .matrix=make_translation(position),.position=position});
++    w.add_component<mesh_3d_component>(e,mesh_3d_component{.mesh=mesh,.material=material});
++    w.add_tag(e,tag_id{"object.renderable"});
++    w.add_tag(e,tag_id{"render.3d"});
++    w.add_tag(e,tag_id{"render.frustum_cull"});
++    return e;
++}
++
++void test_frustum_planes() {
++    for (const f32 aspect : {0.5f,1.0f,2.5f})
++    for (const f32 fov : {0.6f,1.4f}) {
++        const auto projection=make_perspective_fov_lh(fov,aspect,1,40);
++        const auto frustum=extract_camera_frustum(projection);
++        CHECK(sphere_inside_camera_frustum({{0,0,10},0},frustum));
++        CHECK(!sphere_inside_camera_frustum({{0,0,-10},1},frustum));
++        CHECK(sphere_inside_camera_frustum({{0,0,0},1},frustum));
++        CHECK(sphere_inside_camera_frustum({{0,0,41},1},frustum));
++        CHECK(!sphere_inside_camera_frustum({{0,0,42},1},frustum));
++        // Every side plane, both orientations: tangent spheres remain visible.
++        for (usize p=0;p<4;++p) {
++            const auto& plane=frustum.planes[p];
++            const vec3 inside{0,0,10};
++            const f32 distance=dot(plane.normal,inside)+plane.distance;
++            const vec3 tangent=inside-plane.normal*(distance+0.25f);
++            CHECK(sphere_inside_camera_frustum({tangent,0.25f},frustum));
++            CHECK(!sphere_inside_camera_frustum({tangent-plane.normal*0.01f,0.25f},frustum));
++        }
++        // Independent clip-space point oracle exercises row/column and z conventions.
++        const mat4 view=make_look_at_lh({3,2,-5},{0,1,5},{0,1,0});
++        const mat4 vp=view*projection;
++        const auto rotated=extract_camera_frustum(vp);
++        for (int x=-7;x<=7;++x) for (int y=-5;y<=5;++y) for (int z=-6;z<45;z+=3) {
++            const vec3 point{static_cast<f32>(x),static_cast<f32>(y),static_cast<f32>(z)};
++            f32 clip[4]{};
++            for (usize col=0;col<4;++col)
++                clip[col]=point.x*vp.values[0][col]+point.y*vp.values[1][col]+point.z*vp.values[2][col]+vp.values[3][col];
++            const bool inside=clip[0]>=-clip[3] && clip[0]<=clip[3] &&
++                clip[1]>=-clip[3] && clip[1]<=clip[3] && clip[2]>=0 && clip[2]<=clip[3];
++            if (inside) CHECK(sphere_inside_camera_frustum({point,0},rotated));
++            if (!sphere_inside_camera_frustum({point,0},rotated)) CHECK(!inside);
++        }
++    }
++    const auto invalid=std::numeric_limits<f32>::quiet_NaN();
++    CHECK(sphere_inside_camera_frustum({{0,0,0},invalid},camera_frustum_3d{}));
++}
++
++void test_bounds() {
++    recording_backend backend;
++    mesh_3d_registry meshes(backend);
++    const mesh_vertex_3d vertices[]={{{-4,-2,-1},{},{}} ,{{6,8,3},{},{}},{{0,0,0},{},{}}};
++    const u32 indices[]={0,1,2};
++    auto handle=meshes.create({.name="test.mesh",.vertices=vertices,.indices=indices});
++    CHECK(handle.is_valid());
++    const auto bounds=meshes.try_get(handle)->local_bounds;
++    CHECK(close(bounds.center.x,1) && close(bounds.center.y,3) && close(bounds.center.z,1));
++    for (const auto& v:vertices) CHECK(length(v.position-bounds.center)<=bounds.radius+1.0e-5f);
++
++    mat4 shear=mat4::identity(); shear.values[0][1]=1.7f;
++    const mat4 transforms[]={make_scale({-2,3,0.5f}),
++        make_rotation_y(0.8f)*make_scale({4,0.2f,2})*make_rotation_x(0.4f),
++        shear*make_translation({2,3,4}),make_scale({0,0,0})};
++    for (const auto& transform:transforms) {
++        const bounding_sphere_3d local{{1,2,3},2};
++        const auto transformed=transform_bounding_sphere(local,transform);
++        for (int i=0;i<1000;++i) {
++            const f32 angle=static_cast<f32>(i)*0.618f;
++            const vec3 direction=normalize(vec3{std::cos(angle),std::sin(angle),std::sin(angle*1.73f)});
++            const vec3 p=transform_point(local.center+direction*local.radius,transform);
++            CHECK(length(p-transformed.center)<=transformed.radius+1.0e-4f);
++        }
++    }
++    CHECK(meshes.destroy(handle));
++    const u32 invalid_indices[]={0,1,8};
++    CHECK(!meshes.create({.name="test.mesh",.vertices=vertices,.indices=invalid_indices}).is_valid());
++    backend.fail_index_buffer=true;
++    const auto buffer_count=backend.buffers.size();
++    CHECK(!meshes.create({.name="test.mesh",.vertices=vertices,.indices=indices}).is_valid());
++    CHECK(backend.buffers.size()==buffer_count);
++}
++
++void test_render_prepare_and_submit() {
++    recording_backend backend;
++    mesh_3d_registry meshes(backend);
++    material_3d_registry materials;
++    world w;
++    auto camera=camera_entity(w);
++    auto cube=meshes.create_cube();
++    material_3d_desc desc{};
++    desc.metallic_factor=0.7f; desc.roughness_factor=0.3f; desc.alpha_cutoff=0.4f;
++    desc.albedo_texture=backend.create_texture_2d({});
++    desc.metallic_roughness_texture=backend.create_texture_2d({});
++    const auto material=materials.create(desc);
++    auto visible=object_entity(w,cube,material,{0,0,5});
++    auto outside=object_entity(w,cube,material,{100,0,5});
++    object_entity(w,{},material,{0,0,5});
++    const auto parent=w.create_entity({});
++    auto hidden=object_entity(w,cube,material,{0,0,5});
++    w.set_parent(hidden,parent);
++    w.add_tag(parent,tag_id{"render.hidden"});
++    {
++        render_system_3d renderer(backend,meshes,materials);
++        renderer.prepare(w);
++        CHECK(renderer.stats().candidate_count==2);
++        CHECK(renderer.stats().visible_count==1 && renderer.stats().culled_count==1);
++        renderer.submit();
++        CHECK(backend.draws.size()==1);
++        CHECK(backend.draws[0].material.size()==48 && backend.draws[0].object.size()==192);
++        float constants[12]{};
++        std::memcpy(constants,backend.draws[0].material.data(),sizeof(constants));
++        CHECK(close(constants[4],0.7f) && close(constants[5],0.3f) && close(constants[6],0.4f));
++        CHECK(constants[8]==1 && constants[9]==1 && constants[10]==0);
++        CHECK(backend.draws[0].mr==desc.metallic_roughness_texture);
++        CHECK(backend.draws[0].pipeline.depth_write_enabled);
++        CHECK(backend.draws[0].pipeline.srgb_write_enabled);
++
++        w.add_tag(outside,tag_id{"render.always_visible"});
++        renderer.prepare(w);
++        CHECK(renderer.stats().visible_count==2 && renderer.stats().culled_count==0);
++        w.remove_tag(outside,tag_id{"render.always_visible"});
++        // Opt-in behavior is retained; inherited culling is also supported.
++        w.remove_tag(outside,tag_id{"render.frustum_cull"});
++        renderer.prepare(w);
++        CHECK(renderer.stats().visible_count==2);
++        w.set_parent(outside,parent);
++        w.remove_tag(parent,tag_id{"render.hidden"});
++        w.add_tag(parent,tag_id{"render.frustum_cull"});
++        renderer.prepare(w);
++        CHECK(renderer.stats().candidate_count==3 && renderer.stats().culled_count==1);
++        w.add_tag(parent,tag_id{"render.always_visible"});
++        renderer.prepare(w);
++        CHECK(renderer.stats().visible_count==3);
++        w.add_tag(parent,tag_id{"render.hidden"});
++
++        // Opaque first; transparent sorted by view depth, not radial distance.
++        desc.blend_mode=render_blend_mode::alpha;
++        desc.double_sided=true;
++        desc.metallic_roughness_texture={};
++        const auto transparent=materials.create(desc);
++        auto near=object_entity(w,cube,transparent,{7,0,8});
++        object_entity(w,cube,transparent,{0,0,10});
++        auto& near_transform=w.get_component<world_transform_3d_component>(near);
++        near_transform.matrix=make_scale({-1,2,1})*make_translation({7,0,8});
++        renderer.prepare(w); backend.draws.clear(); renderer.submit();
++        CHECK(backend.draws.size()==3);
++        CHECK(backend.draws[0].pipeline.blend_mode==render_blend_mode::opaque);
++        mat4 far_matrix{},near_matrix{};
++        std::memcpy(&far_matrix,backend.draws[1].object.data(),sizeof(mat4));
++        std::memcpy(&near_matrix,backend.draws[2].object.data(),sizeof(mat4));
++        CHECK(close(far_matrix.values[3][2],10) && close(near_matrix.values[3][2],8));
++        CHECK(!backend.draws[1].pipeline.depth_write_enabled && backend.draws[1].pipeline.depth_test_enabled);
++        CHECK(backend.draws[2].pipeline.front_counter_clockwise);
++        CHECK(backend.draws[2].pipeline.cull_mode==render_cull_mode::none);
++        CHECK(!backend.draws[1].mr.is_valid()); // No stale MR slot from the opaque draw.
++        w.get_component<mesh_3d_component>(visible).material={};
++        renderer.prepare(w); backend.draws.clear(); renderer.submit();
++        CHECK(backend.draws.size()==3); // Stale material falls back to default.
++        renderer.clear(); CHECK(renderer.stats().candidate_count==0 && renderer.command_count()==0);
++        backend.resize(0,900); renderer.prepare(w); CHECK(renderer.command_count()==0);
++        backend.resize(1600,900);
++        w.get_component<camera_3d_component>(camera).far_plane=0;
++        renderer.prepare(w); CHECK(renderer.command_count()==0);
++        w.remove_tag(camera,tag_id{"camera.active"});
++        renderer.prepare(w); CHECK(renderer.stats().visible_count==0);
++    }
++    CHECK(backend.pipelines.empty());
++    CHECK(meshes.destroy(cube));
++}
++
++void test_transform_hierarchy_culling() {
++    recording_backend backend; mesh_3d_registry meshes(backend); material_3d_registry materials;
++    world w; const auto cube=meshes.create_cube();
++    const auto add_local=[&](vec3 position,vec3 rotation,vec3 scale) {
++        const auto e=w.create_entity({});
++        w.add_component<transform_3d_component>(e,transform_3d_component{
++            .position=position,.rotation=rotation,.scale=scale});
++        w.add_tag(e,tag_id{"transform.3d"}); return e;
++    };
++    const auto camera=add_local({},{},{1,1,1});
++    w.add_component<camera_3d_component>(camera,camera_3d_component{});
++    w.add_tag(camera,tag_id{"camera.3d"}); w.add_tag(camera,tag_id{"camera.active"});
++    const auto parent=add_local({0,0,8},{},{2,0.5f,1});
++    const auto child=add_local({},{0,0.6f,0.3f},{1,1,1});
++    w.set_parent(child,parent); w.add_tag(child,tag_id{"transform.inherit_parent"});
++    w.add_component<mesh_3d_component>(child,mesh_3d_component{.mesh=cube,.material=materials.default_material()});
++    w.add_tag(child,tag_id{"object.renderable"}); w.add_tag(child,tag_id{"render.3d"});
++    w.add_tag(parent,tag_id{"render.frustum_cull"});
++    entity_query_desc query{.required_components={get_type_id<transform_3d_component>()},.required_tags={}};
++    query.required_tags.require_all(tag_id{"transform.3d"});
++    system_context update{.target_world=&w,.entity_query=&query};
++    render_system_3d renderer(backend,meshes,materials);
++    transform_hierarchy_system_3d(update,nullptr); renderer.prepare(w);
++    CHECK(renderer.stats().visible_count==1);
++    w.get_component<transform_3d_component>(parent).position.x=200;
++    transform_hierarchy_system_3d(update,nullptr); renderer.prepare(w);
++    CHECK(renderer.stats().culled_count==1 && renderer.command_count()==0);
++    CHECK(meshes.destroy(cube));
++}
++
++void test_gltf_materials() {
++    // Self-contained fixture with external image and buffer. It never depends on user assets.
++    const auto folder=std::filesystem::path{"gltf_pbr_test_fixture"};
++    std::filesystem::create_directories(folder);
++    const float positions[]={-1,-1,0, 1,-1,0, 0,1,0};
++    std::ofstream bin(folder/"mesh.bin",std::ios::binary);
++    bin.write(reinterpret_cast<const char*>(positions),sizeof(positions)); bin.close();
++    // A 1x1 uncompressed TGA is supported by the existing image loader.
++    unsigned char tga[21]{}; tga[2]=2; tga[12]=1; tga[14]=1; tga[16]=24;
++    tga[18]=64; tga[19]=128; tga[20]=192;
++    std::ofstream image(folder/"map image.tga",std::ios::binary);
++    image.write(reinterpret_cast<const char*>(tga),sizeof(tga)); image.close();
++    std::ofstream json(folder/"model.gltf");
++    json << R"({
++      "asset":{"version":"2.0"},"buffers":[{"uri":"mesh.bin","byteLength":36}],
++      "bufferViews":[{"buffer":0,"byteLength":36}],
++      "accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[-1,-1,0],"max":[1,1,0]}],
++      "images":[{"uri":"map%20image.tga"}],"textures":[{"source":0}],
++      "materials":[{"pbrMetallicRoughness":{"baseColorFactor":[0.2,0.3,0.4,0.6],
++        "metallicFactor":0.7,"roughnessFactor":0.25,"baseColorTexture":{"index":0},
++        "metallicRoughnessTexture":{"index":0}},"alphaMode":"MASK","alphaCutoff":0.33,"doubleSided":true},
++        {"alphaMode":"BLEND"},{}],
++      "meshes":[{"primitives":[{"attributes":{"POSITION":0},"material":0},
++        {"attributes":{"POSITION":0},"material":1},{"attributes":{"POSITION":0},"material":2},
++        {"attributes":{"POSITION":0}},{"attributes":{"POSITION":0}}]}],
++      "nodes":[{"mesh":0}],"scenes":[{"nodes":[0]}],"scene":0
++    })";
++    json.close();
++    recording_backend backend; mesh_3d_registry meshes(backend); material_3d_registry materials;
++    texture_asset_registry textures(backend); world w;
++    auto instance=instantiate_gltf_model_3d((folder/"model.gltf").string().c_str(),w,meshes,materials,textures);
++    CHECK(instance.owned_meshes.size()==5 && instance.owned_materials.size()==4);
++    const auto& m=*materials.try_get(instance.owned_materials[0]);
++    CHECK(close(m.metallic_factor,0.7f) && close(m.roughness_factor,0.25f));
++    CHECK(close(m.alpha_cutoff,0.33f) && m.double_sided && close(m.base_color.w,0.6f));
++    CHECK(!m.albedo_manual_srgb_decode);
++    CHECK(m.albedo_texture!=m.metallic_roughness_texture);
++    CHECK(backend.textures.get(m.albedo_texture)==texture_format::rgba8_unorm_srgb);
++    CHECK(backend.textures.get(m.metallic_roughness_texture)==texture_format::rgba8_unorm);
++    CHECK(textures.records().size()==2);
++    const auto albedo=m.albedo_texture, mr=m.metallic_roughness_texture;
++    const auto image_path=(folder/"map image.tga").generic_string();
++    CHECK(textures.load_texture_2d(image_path.c_str(),texture_format::rgba8_unorm_srgb)==albedo);
++    CHECK(textures.load_texture_2d(image_path.c_str())==mr);
++    CHECK(materials.try_get(instance.owned_materials[1])->blend_mode==render_blend_mode::alpha);
++    for (usize i=1;i<4;++i) CHECK(materials.try_get(instance.owned_materials[i])->metallic_factor==1.0f);
++    CHECK(textures.unload_texture_2d(image_path.c_str(),texture_format::rgba8_unorm_srgb));
++    CHECK(backend.is_valid(mr) && !backend.is_valid(albedo));
++    destroy_gltf_model_3d(instance,w,meshes,materials);
++    CHECK(instance.entities.empty());
++    textures.clear_cache();
++    CHECK(backend.textures.empty() && backend.buffers.empty());
++}
++}
++
++int main() {
++    try {
++        test_frustum_planes(); std::cout<<"PASS frustum planes, tangency, aspect/FOV and clip oracle\n";
++        test_bounds(); std::cout<<"PASS mesh bounds, shear, negative/zero scale and failed uploads\n";
++        test_render_prepare_and_submit(); std::cout<<"PASS prepare, stats, hierarchy tags, GPU constants and draw ordering\n";
++        test_transform_hierarchy_culling(); std::cout<<"PASS transform hierarchy to culling integration\n";
++        test_gltf_materials(); std::cout<<"PASS glTF factors, maps, alpha, defaults and sRGB cache\n";
++        test_pbr_shader(); std::cout<<"PASS compiled HLSL and D3D11 WARP pixel regressions\n";
++        return 0;
++    } catch (const std::exception& error) {
++        std::cerr<<error.what()<<'\n'; return 1;
++    }
++}
+--- /dev/null
++++ b/tests/pbr_shader_tests.cpp
+@@ -0,0 +1,235 @@
++#include <rain/render/mesh_3d_shader_source.hpp>
++#include <rain/render/mesh_3d.hpp>
++#include <rain/core/math/mat4.hpp>
++#include <rain/core/math/vec4.hpp>
++
++#include <d3d11.h>
++#include <d3dcompiler.h>
++#include <array>
++#include <cmath>
++#include <cstring>
++#include <iostream>
++#include <stdexcept>
++#include <vector>
++
++namespace {
++using namespace rain;
++template<class T> struct com {
++    T* p=nullptr;
++    ~com() { if (p) p->Release(); }
++    com()=default;
++    com(const com&)=delete;
++    com& operator=(const com&)=delete;
++    T** out() { if (p) p->Release(); p=nullptr; return &p; }
++};
++void check(bool value,const char* message) { if (!value) throw std::runtime_error(message); }
++void hr(HRESULT result,const char* message) { check(SUCCEEDED(result),message); }
++
++struct warp_renderer {
++    com<ID3D11Device> device;
++    com<ID3D11DeviceContext> context;
++    com<ID3D11VertexShader> vs;
++    com<ID3D11PixelShader> ps;
++    com<ID3D11InputLayout> layout;
++    com<ID3D11Buffer> vertices,object,scene,material;
++    com<ID3D11Texture2D> target,staging;
++    com<ID3D11RenderTargetView> rtv;
++    com<ID3D11RasterizerState> rasterizer;
++    com<ID3D11SamplerState> sampler;
++    std::array<vec4,4> scene_data{vec4{0,0,1,0},vec4{4,4,4,1},
++                                vec4{0.12f,0.12f,0.12f,1},vec4{0,0,-3,1}};
++    static constexpr UINT size=32;
++
++    void make_buffer(com<ID3D11Buffer>& output,UINT bind,UINT bytes,const void* data) {
++        D3D11_BUFFER_DESC desc{}; desc.ByteWidth=bytes; desc.BindFlags=bind;
++        D3D11_SUBRESOURCE_DATA initial{}; initial.pSysMem=data;
++        hr(device.p->CreateBuffer(&desc,&initial,output.out()),"CreateBuffer");
++    }
++    warp_renderer() {
++        D3D_FEATURE_LEVEL level{};
++        hr(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,
++            D3D11_SDK_VERSION,device.out(),&level,context.out()),"D3D11 WARP unavailable");
++        com<ID3DBlob> vs_blob,ps_blob,error;
++        const auto compile=[&](const char* entry,const char* profile,com<ID3DBlob>& blob) {
++            const auto code=detail::mesh_3d_shader_source;
++            const HRESULT result=D3DCompile(code,std::strlen(code),"mesh_3d.hlsl",nullptr,nullptr,
++                entry,profile,D3DCOMPILE_ENABLE_STRICTNESS|D3DCOMPILE_WARNINGS_ARE_ERRORS,
++                0,blob.out(),error.out());
++            if (FAILED(result) && error.p)
++                throw std::runtime_error(static_cast<const char*>(error.p->GetBufferPointer()));
++            hr(result,"D3DCompile");
++        };
++        compile("vertex_main","vs_4_0",vs_blob);
++        compile("pixel_main","ps_4_0",ps_blob);
++        hr(device.p->CreateVertexShader(vs_blob.p->GetBufferPointer(),vs_blob.p->GetBufferSize(),
++            nullptr,vs.out()),"CreateVertexShader");
++        hr(device.p->CreatePixelShader(ps_blob.p->GetBufferPointer(),ps_blob.p->GetBufferSize(),
++            nullptr,ps.out()),"CreatePixelShader");
++        const D3D11_INPUT_ELEMENT_DESC attributes[]={
++            {"POSITION",0,DXGI_FORMAT_R32G32B32_FLOAT,0,0,D3D11_INPUT_PER_VERTEX_DATA,0},
++            {"NORMAL",0,DXGI_FORMAT_R32G32B32_FLOAT,0,12,D3D11_INPUT_PER_VERTEX_DATA,0},
++            {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,24,D3D11_INPUT_PER_VERTEX_DATA,0}};
++        hr(device.p->CreateInputLayout(attributes,3,vs_blob.p->GetBufferPointer(),
++            vs_blob.p->GetBufferSize(),layout.out()),"CreateInputLayout");
++        const mesh_vertex_3d triangle[]={{{-1,-1,0},{0,0,-1},{0,0}},
++            {{-1,3,0},{0,0,-1},{0,0}},{{3,-1,0},{0,0,-1},{0,0}}};
++        make_buffer(vertices,D3D11_BIND_VERTEX_BUFFER,sizeof(triangle),triangle);
++        const mat4 matrices[]={mat4::identity(),mat4::identity(),mat4::identity()};
++        make_buffer(object,D3D11_BIND_CONSTANT_BUFFER,sizeof(matrices),matrices);
++        make_buffer(scene,D3D11_BIND_CONSTANT_BUFFER,sizeof(scene_data),scene_data.data());
++        const vec4 zero[3]{};
++        make_buffer(material,D3D11_BIND_CONSTANT_BUFFER,sizeof(zero),zero);
++        D3D11_TEXTURE2D_DESC desc{};
++        desc.Width=size; desc.Height=size; desc.MipLevels=1; desc.ArraySize=1;
++        desc.Format=DXGI_FORMAT_R32G32B32A32_FLOAT; desc.SampleDesc.Count=1;
++        desc.BindFlags=D3D11_BIND_RENDER_TARGET;
++        hr(device.p->CreateTexture2D(&desc,nullptr,target.out()),"Create float render target");
++        hr(device.p->CreateRenderTargetView(target.p,nullptr,rtv.out()),"CreateRenderTargetView");
++        desc.BindFlags=0; desc.Usage=D3D11_USAGE_STAGING; desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
++        hr(device.p->CreateTexture2D(&desc,nullptr,staging.out()),"Create readback");
++        D3D11_RASTERIZER_DESC raster{}; raster.FillMode=D3D11_FILL_SOLID;
++        raster.CullMode=D3D11_CULL_NONE; raster.DepthClipEnable=TRUE;
++        hr(device.p->CreateRasterizerState(&raster,rasterizer.out()),"CreateRasterizerState");
++        D3D11_SAMPLER_DESC sample{}; sample.Filter=D3D11_FILTER_MIN_MAG_MIP_POINT;
++        sample.AddressU=sample.AddressV=sample.AddressW=D3D11_TEXTURE_ADDRESS_CLAMP;
++        sample.MaxLOD=D3D11_FLOAT32_MAX;
++        hr(device.p->CreateSamplerState(&sample,sampler.out()),"CreateSamplerState");
++    }
++    std::vector<vec4> render(std::array<vec4,3> data,
++        std::array<unsigned char,4> mr={255,255,255,255},
++        std::array<unsigned char,4> albedo={255,255,255,255},bool srgb=false) {
++        com<ID3D11Texture2D> maps[2]; com<ID3D11ShaderResourceView> views[2];
++        for (int i=0;i<2;++i) {
++            D3D11_TEXTURE2D_DESC desc{};
++            desc.Width=desc.Height=desc.MipLevels=desc.ArraySize=desc.SampleDesc.Count=1;
++            desc.Format=i==0 && srgb ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
++            desc.BindFlags=D3D11_BIND_SHADER_RESOURCE;
++            D3D11_SUBRESOURCE_DATA initial{};
++            initial.pSysMem=i==0 ? albedo.data() : mr.data(); initial.SysMemPitch=4;
++            hr(device.p->CreateTexture2D(&desc,&initial,maps[i].out()),"Create material map");
++            hr(device.p->CreateShaderResourceView(maps[i].p,nullptr,views[i].out()),"Create map view");
++        }
++        const float clear[4]{};
++        context.p->ClearRenderTargetView(rtv.p,clear);
++        context.p->OMSetRenderTargets(1,&rtv.p,nullptr);
++        const D3D11_VIEWPORT viewport{0,0,static_cast<float>(size),static_cast<float>(size),0,1};
++        context.p->RSSetViewports(1,&viewport); context.p->RSSetState(rasterizer.p);
++        context.p->IASetInputLayout(layout.p);
++        context.p->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
++        const UINT stride=sizeof(mesh_vertex_3d),offset=0;
++        context.p->IASetVertexBuffers(0,1,&vertices.p,&stride,&offset);
++        context.p->VSSetShader(vs.p,nullptr,0); context.p->PSSetShader(ps.p,nullptr,0);
++        context.p->UpdateSubresource(material.p,0,nullptr,data.data(),0,0);
++        context.p->UpdateSubresource(scene.p,0,nullptr,scene_data.data(),0,0);
++        context.p->VSSetConstantBuffers(0,1,&object.p);
++        context.p->PSSetConstantBuffers(1,1,&scene.p);
++        context.p->PSSetConstantBuffers(2,1,&material.p);
++        ID3D11ShaderResourceView* resources[]={views[0].p,views[1].p};
++        context.p->PSSetShaderResources(0,2,resources); context.p->PSSetSamplers(0,1,&sampler.p);
++        context.p->Draw(3,0);
++        context.p->CopyResource(staging.p,target.p);
++        D3D11_MAPPED_SUBRESOURCE mapped{};
++        hr(context.p->Map(staging.p,0,D3D11_MAP_READ,0,&mapped),"Readback Map");
++        std::vector<vec4> result(size*size);
++        for (UINT row=0;row<size;++row)
++            std::memcpy(result.data()+row*size,static_cast<const char*>(mapped.pData)+row*mapped.RowPitch,
++                size*sizeof(vec4));
++        context.p->Unmap(staging.p,0);
++        for (auto pixel:result)
++            check(std::isfinite(pixel.x) && std::isfinite(pixel.y) && std::isfinite(pixel.z) &&
++                std::isfinite(pixel.w),"Non-finite PBR pixel");
++        return result;
++    }
++    void check_srgb_blending(std::array<vec4,3> data) {
++        // Compare the actual sRGB blend result against encode(linear shader RGB * alpha).
++        const auto expected=render(data);
++        com<ID3D11Texture2D> color,readback;
++        com<ID3D11RenderTargetView> srgb_view;
++        com<ID3D11BlendState> blend;
++        D3D11_TEXTURE2D_DESC desc{};
++        desc.Width=desc.Height=size; desc.MipLevels=desc.ArraySize=desc.SampleDesc.Count=1;
++        desc.Format=DXGI_FORMAT_R8G8B8A8_TYPELESS; desc.BindFlags=D3D11_BIND_RENDER_TARGET;
++        hr(device.p->CreateTexture2D(&desc,nullptr,color.out()),"Create sRGB target");
++        D3D11_RENDER_TARGET_VIEW_DESC view{};
++        view.Format=DXGI_FORMAT_R8G8B8A8_UNORM_SRGB; view.ViewDimension=D3D11_RTV_DIMENSION_TEXTURE2D;
++        hr(device.p->CreateRenderTargetView(color.p,&view,srgb_view.out()),"Create sRGB target view");
++        desc.BindFlags=0; desc.Usage=D3D11_USAGE_STAGING; desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
++        hr(device.p->CreateTexture2D(&desc,nullptr,readback.out()),"Create sRGB readback");
++        D3D11_BLEND_DESC state{};
++        auto& target_blend=state.RenderTarget[0];
++        target_blend.BlendEnable=TRUE; target_blend.RenderTargetWriteMask=D3D11_COLOR_WRITE_ENABLE_ALL;
++        target_blend.SrcBlend=D3D11_BLEND_SRC_ALPHA; target_blend.DestBlend=D3D11_BLEND_INV_SRC_ALPHA;
++        target_blend.BlendOp=target_blend.BlendOpAlpha=D3D11_BLEND_OP_ADD;
++        target_blend.SrcBlendAlpha=D3D11_BLEND_ONE; target_blend.DestBlendAlpha=D3D11_BLEND_INV_SRC_ALPHA;
++        hr(device.p->CreateBlendState(&state,blend.out()),"Create alpha blend state");
++        const float clear[4]{};
++        context.p->ClearRenderTargetView(srgb_view.p,clear);
++        context.p->OMSetRenderTargets(1,&srgb_view.p,nullptr);
++        context.p->OMSetBlendState(blend.p,nullptr,0xffffffff);
++        context.p->Draw(3,0);
++        context.p->CopyResource(readback.p,color.p);
++        D3D11_MAPPED_SUBRESOURCE mapped{};
++        hr(context.p->Map(readback.p,0,D3D11_MAP_READ,0,&mapped),"Map sRGB result");
++        const auto encode=[](float linear) {
++            return linear<=0.0031308f ? 12.92f*linear : 1.055f*std::pow(linear,1.0f/2.4f)-0.055f;
++        };
++        bool correct=true;
++        for (UINT row=0;row<size;++row) for (UINT col=0;col<size;++col) {
++            const auto* rgba=static_cast<const unsigned char*>(mapped.pData)+row*mapped.RowPitch+col*4;
++            const auto p=expected[row*size+col];
++            correct=correct && std::abs(rgba[0]/255.0f-encode(p.x*p.w))<0.008f
++                && std::abs(rgba[1]/255.0f-encode(p.y*p.w))<0.008f
++                && std::abs(rgba[2]/255.0f-encode(p.z*p.w))<0.008f;
++        }
++        context.p->Unmap(readback.p,0);
++        context.p->OMSetBlendState(nullptr,nullptr,0xffffffff);
++        context.p->OMSetRenderTargets(1,&rtv.p,nullptr);
++        check(correct,"sRGB output or linear-space transparency is incorrect");
++    }
++
++};
++
++double difference(const std::vector<vec4>& a,const std::vector<vec4>& b) {
++    double sum=0;
++    for (usize i=0;i<a.size();++i) sum+=std::abs(a[i].x-b[i].x)+std::abs(a[i].y-b[i].y)+std::abs(a[i].z-b[i].z);
++    return sum/a.size();
++}
++}
++
++void test_pbr_shader() {
++    warp_renderer gpu;
++    std::array<vec4,3> material{vec4{0.8f,0.25f,0.08f,0.6f},vec4{0,0.4f,-1,0},vec4{}};
++    auto dielectric=gpu.render(material);
++    material[1].x=1;
++    auto metal=gpu.render(material);
++    check(difference(metal,dielectric)>0.05,"Metallicity does not change shading");
++    material[1].y=0;
++    auto smooth=gpu.render(material);
++    material[1].y=1;
++    auto rough=gpu.render(material);
++    check(difference(smooth,rough)>0.01,"Roughness does not change highlight");
++    material[2].y=1; // Texture R is unused; G/B modulate material factors.
++    auto mapped=gpu.render(material,{5,128,64,255});
++    check(difference(mapped,gpu.render(material,{250,128,64,255}))<1.0e-6,"MR red channel affects shading");
++    material[2].y=0; material[1].x=64.0f/255; material[1].y=128.0f/255;
++    check(difference(mapped,gpu.render(material))<1.0e-5,"MR green/blue channel or factor product is incorrect");
++
++    material[2].x=1; material[1].w=1;
++    auto manual=gpu.render(material,{},{128,80,200,153});
++    material[1].w=0;
++    check(difference(manual,gpu.render(material,{},{128,80,200,153},true))<0.003,
++        "Hardware and manual sRGB decode disagree");
++    material[2]={}; material[1].z=0.7f;
++    const auto clipped=gpu.render(material);
++    for (auto pixel:clipped) check(pixel.w==0 && pixel.x==0,"Alpha mask did not discard");
++    material[1].z=0.5f;
++    for (auto pixel:gpu.render(material)) check(pixel.w==1,"MASK alpha must be opaque");
++    material[1].z=-1; material[2].z=1;
++    for (auto pixel:gpu.render(material)) check(std::abs(pixel.w-0.6f)<1.0e-6f,"BLEND alpha lost");
++    gpu.check_srgb_blending(material);
++    gpu.scene_data[0]={}; gpu.scene_data[2]={};
++    for (auto pixel:gpu.render(material))
++        check(pixel.x==0 && pixel.y==0 && pixel.z==0,"Zero light direction generates illumination");
++    std::cout<<"WARP mean RGB differences: metallic="<<difference(metal,dielectric)
++             <<", roughness="<<difference(smooth,rough)<<'\n';
++}
+--- a/samples/CMakeLists.txt
++++ b/samples/CMakeLists.txt
+@@ -1 +1,2 @@
+-add_subdirectory(sample_2d_action)+add_subdirectory(sample_2d_action)
++add_subdirectory(sample_3d_pbr)--- /dev/null
++++ b/samples/sample_3d_pbr/CMakeLists.txt
+@@ -0,0 +1,4 @@
++add_executable(sample_3d_pbr src/main.cpp)
++target_link_libraries(sample_3d_pbr PRIVATE rain_app)
++target_compile_features(sample_3d_pbr PRIVATE cxx_std_20)
++rain_apply_common_options(sample_3d_pbr)
+--- /dev/null
++++ b/samples/sample_3d_pbr/src/main.cpp
+@@ -0,0 +1,167 @@
++#include <rain/app/application.hpp>
++#include <rain/core/log.hpp>
++#include <rain/render/render_system_3d.hpp>
++#include <rain/runtime/transform_hierarchy_system_3d.hpp>
++
++#include <cmath>
++#include <cstdio>
++#include <memory>
++#include <string>
++#include <vector>
++
++namespace {
++using namespace rain;
++
++mesh_3d_handle create_sphere(mesh_3d_registry& meshes) {
++    constexpr u32 rings=24,segments=48;
++    constexpr f32 pi=3.14159265359f;
++    std::vector<mesh_vertex_3d> vertices;
++    std::vector<u32> indices;
++    for (u32 ring=0;ring<=rings;++ring) {
++        const f32 v=static_cast<f32>(ring)/rings;
++        for (u32 segment=0;segment<=segments;++segment) {
++            const f32 u=static_cast<f32>(segment)/segments;
++            const vec3 normal{std::sin(v*pi)*std::cos(u*2*pi),std::cos(v*pi),
++                              std::sin(v*pi)*std::sin(u*2*pi)};
++            vertices.push_back({normal,normal,{u,v}});
++        }
++    }
++    for (u32 ring=0;ring<rings;++ring) for (u32 segment=0;segment<segments;++segment) {
++        const u32 a=ring*(segments+1)+segment,b=a+segments+1;
++        if (ring!=0) indices.insert(indices.end(),{a,a+1,b});
++        if (ring+1!=rings) indices.insert(indices.end(),{a+1,b+1,b});
++    }
++    return meshes.create({.name="pbr.sphere",.vertices=vertices,.indices=indices});
++}
++
++class pbr_layer final : public layer {
++    std::unique_ptr<render_system_3d> renderer_;
++    entity_id camera_;
++    entity_query_desc transform_query_;
++    mesh_3d_handle sphere_;
++    std::vector<entity_id> entities_,cull_objects_;
++    std::vector<material_3d_handle> materials_;
++    texture_2d_handle mr_texture_;
++    u64 frame_limit_=0;
++    bool previous_c_=false,culling_enabled_=true;
++    render_system_3d_stats last_stats_{};
++
++    entity_id add_transform(world& w,vec3 position,vec3 scale={1,1,1}) {
++        const auto e=w.create_entity({});
++        entities_.push_back(e);
++        w.add_component<transform_3d_component>(e,transform_3d_component{.position=position,.scale=scale});
++        w.add_tag(e,tag_id{"transform.3d"});
++        return e;
++    }
++    void add_sphere(application_context& context,vec3 position,material_3d_handle material,
++                    vec3 scale={0.75f,0.75f,0.75f}) {
++        const auto e=add_transform(*context.target_world,position,scale);
++        context.target_world->add_component<mesh_3d_component>(e,mesh_3d_component{.mesh=sphere_,.material=material});
++        context.target_world->add_tag(e,tag_id{"object.renderable"});
++        context.target_world->add_tag(e,tag_id{"render.3d"});
++        context.target_world->add_tag(e,tag_id{"render.frustum_cull"});
++        cull_objects_.push_back(e);
++    }
++public:
++    explicit pbr_layer(u64 frame_limit):frame_limit_(frame_limit) {
++        transform_query_.required_components = {get_type_id<transform_3d_component>()};
++        transform_query_.required_tags.require_all(tag_id{"transform.3d"});
++        transform_query_.require_alive = true;
++        transform_query_.require_active = true;
++    }
++    void on_attach(application_context& context) override {
++        renderer_=std::make_unique<render_system_3d>(*context.renderer,*context.meshes_3d,*context.materials_3d);
++        auto& w=*context.target_world;
++        sphere_=create_sphere(*context.meshes_3d);
++        camera_=add_transform(w,{0,0,-14});
++        w.add_component<camera_3d_component>(camera_,camera_3d_component{.far_plane=100});
++        w.add_tag(camera_,tag_id{"camera.3d"}); w.add_tag(camera_,tag_id{"camera.active"});
++        const auto sun=w.create_entity({}); entities_.push_back(sun);
++        w.add_component<directional_light_3d_component>(sun,directional_light_3d_component{
++            .direction={0.4f,-0.7f,1},.color={1,0.96f,0.9f},.intensity=4});
++        w.add_tag(sun,tag_id{"light.directional"}); w.add_tag(sun,tag_id{"light.active"});
++
++        for (u32 row=0;row<5;++row) for (u32 column=0;column<6;++column) {
++            material_3d_desc desc{};
++            desc.name="pbr.grid."+std::to_string(row)+"."+std::to_string(column);
++            desc.base_color={0.8f,0.25f,0.08f,1};
++            desc.metallic_factor=static_cast<f32>(row)/4;
++            desc.roughness_factor=0.08f+0.92f*static_cast<f32>(column)/5;
++            auto material=context.materials_3d->create(desc); materials_.push_back(material);
++            add_sphere(context,{(static_cast<f32>(column)-2.5f)*2.2f,
++                               (2-static_cast<f32>(row))*2.2f,0},material);
++        }
++        // An untextured model and hundreds of offscreen objects share one mesh.
++        for (u32 i=0;i<240;++i)
++            add_sphere(context,{(i%2 ? 1.0f : -1.0f)*(60+static_cast<f32>(i%20)),
++                static_cast<f32>(i%7)-3,static_cast<f32>(i/20)*3},materials_.front());
++
++        const u8 pixels[]={255,20,255,255,255,80,255,255,255,160,255,255,255,255,255,255};
++        mr_texture_=context.renderer->create_texture_2d({.name="pbr.mr.stripes",.width=4,.height=1,
++            .pixels=pixels,.size_bytes=sizeof(pixels)});
++        material_3d_desc textured{};
++        textured.name="pbr.mr.map"; textured.base_color={0.9f,0.7f,0.3f,1};
++        textured.metallic_factor=1; textured.metallic_roughness_texture=mr_texture_;
++        auto material=context.materials_3d->create(textured); materials_.push_back(material);
++        add_sphere(context,{0,-6.3f,1},material,{1,1,1});
++        log_info("PBR grid: left->right roughness 0.08..1, top->bottom metallic 0..1.");
++        log_info("WASD move, Q/E down/up, arrows look, C toggle culling, R reset, Esc quit.");
++    }
++    void on_update(application_context& context) override {
++        auto& window=*context.main_window;
++        if (window.is_key_down(key_code::escape) ||
++            (frame_limit_!=0 && context.frame_index>=frame_limit_)) { window.request_close(); return; }
++        auto& camera=context.target_world->get_component<transform_3d_component>(camera_);
++        const f32 dt=context.delta_seconds;
++        const auto axis=[&](key_code positive,key_code negative) {
++            return static_cast<f32>(window.is_key_down(positive))-static_cast<f32>(window.is_key_down(negative));
++        };
++        camera.rotation.y+=axis(key_code::right,key_code::left)*dt;
++        camera.rotation.x+=axis(key_code::down,key_code::up)*dt;
++        camera.rotation.x=std::clamp(camera.rotation.x,-1.4f,1.4f);
++        const mat4 rotation=make_rotation_y(camera.rotation.y);
++        const vec3 movement=transform_point({axis(key_code::d,key_code::a),
++            axis(key_code::e,key_code::q),axis(key_code::w,key_code::s)},rotation);
++        camera.position=camera.position+movement*(dt*7);
++        if (window.is_key_down(key_code::r)) { camera.position={0,0,-14}; camera.rotation={}; }
++        const bool pressed=window.is_key_down(key_code::c);
++        if (pressed && !previous_c_) {
++            culling_enabled_=!culling_enabled_;
++            for (auto e:cull_objects_) {
++                if (culling_enabled_) context.target_world->remove_tag(e,tag_id{"render.always_visible"});
++                else context.target_world->add_tag(e,tag_id{"render.always_visible"});
++            }
++        }
++        previous_c_=pressed;
++    }
++    void on_render(application_context& context) override {
++        system_context update{.target_world=context.target_world,.entity_query=&transform_query_};
++        transform_hierarchy_system_3d(update,nullptr);
++        renderer_->prepare(*context.target_world);
++        renderer_->submit();
++        const auto stats=renderer_->stats();
++        if (stats.visible_count!=last_stats_.visible_count || stats.culled_count!=last_stats_.culled_count) {
++            char message[160]{};
++            std::snprintf(message,sizeof(message),"3D candidate=%u visible=%u culled=%u culling=%s",
++                stats.candidate_count,stats.visible_count,stats.culled_count,culling_enabled_ ? "on" : "off");
++            log_info(message); last_stats_=stats;
++        }
++    }
++    void on_detach(application_context& context) override {
++        renderer_.reset();
++        for (auto e:entities_) if (context.target_world->is_alive(e)) context.target_world->destroy_entity(e);
++        for (auto material:materials_) context.materials_3d->destroy(material);
++        context.meshes_3d->destroy(sphere_);
++        context.renderer->destroy_texture_2d(mr_texture_);
++    }
++};
++}
++
++int main(int argc,char** argv) {
++    rain::u64 frame_limit=0;
++    if (argc==3 && std::string{argv[1]}=="--frames") frame_limit=std::stoull(argv[2]);
++    rain::application app({.title="Rain PBR | roughness -> | metallic down | WASD QE arrows | C culling | R reset",
++        .width=1440,.height=900,.clear_color={0.025f,0.03f,0.04f,1}});
++    app.push_layer(std::make_unique<pbr_layer>(frame_limit));
++    return app.run();
++}
+--- a/engine/render/include/rain/render/d3d11/d3d11_render_backend.hpp
++++ b/engine/render/include/rain/render/d3d11/d3d11_render_backend.hpp
+@@ -315,6 +315,7 @@
+ 			render_blend_mode blend_mode = render_blend_mode::opaque;
+ 			ID3D11RasterizerState* rasterizer_state = nullptr;
+ 			ID3D11DepthStencilState* depth_stencil_state = nullptr;
++            bool srgb_write_enabled = false;
+ 		};
+ 
+ 		struct d3d11_texture_2d {
+@@ -337,6 +338,7 @@
+ 		ID3D11DeviceContext* device_context_ = nullptr;
+ 		IDXGISwapChain* swap_chain_ = nullptr;
+ 		ID3D11RenderTargetView* render_target_view_ = nullptr;
++        ID3D11RenderTargetView* srgb_render_target_view_ = nullptr;
+ 
+ 		ID3D11VertexShader* debug_vertex_shader_ = nullptr;
+ 		ID3D11PixelShader* debug_pixel_shader_ = nullptr;

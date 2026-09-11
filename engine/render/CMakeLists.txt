@@ -13,6 +13,7 @@ add_library(rain_render)
 target_sources(rain_render
     PRIVATE
         src/d3d11/d3d11_render_backend.cpp
+        src/d3d11/d3d11_frame_targets.cpp
         src/sprite_renderer_2d.cpp
         src/render_system_2d.cpp
         src/material_2d_registry.cpp
@@ -27,6 +28,7 @@ target_sources(rain_render
         include/rain/render/render_backend.hpp
         include/rain/render/render_clear_color.hpp
         include/rain/render/d3d11/d3d11_render_backend.hpp
+        include/rain/render/d3d11/d3d11_frame_targets.hpp
         include/rain/render/render_handles.hpp
         include/rain/render/render_resource_desc.hpp
         include/rain/render/sprite_renderer_2d.hpp
@@ -38,6 +40,8 @@ target_sources(rain_render
         include/rain/render/render_types.hpp
         include/rain/render/render_command_2d.hpp
         include/rain/render/render_queue_2d.hpp
+        include/rain/render/bounds_3d.hpp
+        include/rain/render/frustum_culling_3d.hpp
         include/rain/render/camera_3d.hpp
         include/rain/render/directional_light_3d_component.hpp
         include/rain/render/material_3d.hpp

@@ -1,5 +1,6 @@
 #include <rain/runtime/world.hpp>
 #include<rain/runtime/tag_component.hpp>
+#include<algorithm>
 
 namespace rain{
     entity_id world::create_entity(){
@@ -19,6 +20,8 @@ namespace rain{
                 .name = desc.name,
                 .active = desc.active
             };
+
+            hierarchy_[index] = entity_hierarchy_record{};
         }
         else {
             index = static_cast<u32>(records_.size());
@@ -32,6 +35,8 @@ namespace rain{
                 .name = desc.name,
                 .active = desc.active
             });
+
+            hierarchy_.push_back(entity_hierarchy_record{});
         }
 
         ++living_count_;
@@ -45,6 +50,17 @@ namespace rain{
 
     bool world::destroy_entity(entity_id entity){
         if(!is_alive(entity))return false;
+
+        const std::vector<entity_id>children = hierarchy_[entity.index].children;
+
+        for (entity_id child : children) {
+            if (is_alive(child))clear_parent(child);
+        }
+
+        clear_parent(entity);
+
+        hierarchy_[entity.index] = entity_hierarchy_record{};
+
 
         entity_record& record = records_[entity.index];
 
@@ -257,5 +273,108 @@ namespace rain{
 
         return result;
     }
+
+    bool world::set_parent(entity_id child, entity_id parent) {
+        if (!is_alive(child) || !is_alive(parent) || child == parent)return false;
+
+        if (is_descendant(parent, child))return false;
+
+        clear_parent(child);
+
+        hierarchy_[child.index].parent = parent;
+
+        std::vector<entity_id>& children = hierarchy_[parent.index].children;
+
+        children.push_back(child);
+
+        return true;
+    }
+
+    bool world::clear_parent(entity_id child) {
+        if (!is_alive(child))return false;
+
+        entity_hierarchy_record& child_record = hierarchy_[child.index];
+
+        const entity_id old_parent = child_record.parent;
+
+        if (!old_parent.is_valid() || !is_alive(old_parent)) {
+            child_record.parent = entity_id{};
+            return false;
+        }
+
+        std::vector<entity_id>& siblings = hierarchy_[old_parent.index].children;
+
+        const auto iterator = std::remove(siblings.begin(),siblings.end(),child);
+
+        siblings.erase(iterator, siblings.end());
+        child_record.parent = entity_id{};
+
+        return true;
+    }
+
+    entity_id world::parent_of(entity_id entity)const {
+        if (!is_alive(entity))return entity_id{};
+
+        const entity_id parent = hierarchy_[entity.index].parent;
+
+        if (!parent.is_valid() || !is_alive(parent))return entity_id{};
+
+        return parent;
+    }
+
+    std::span<const entity_id>world::children_of(entity_id entity)const{
+        if (!is_alive(entity))return{};
+
+        const std::vector<entity_id>& children = hierarchy_[entity.index].children;
+
+        return{ children.data(),children.size() };
+    }
+
+    bool world::is_descendant(entity_id candidate, entity_id ancestor)const {
+        if (!is_alive(candidate) || !is_alive(ancestor))return false;
+
+        entity_id current = parent_of(candidate);
+
+        usize visited_count = 0;
+
+        while (current.is_valid()) {
+            if (current == ancestor) {
+                return true;
+            }
+
+            current = parent_of(current);
+
+            ++visited_count;
+
+            if (visited_count > records_.size())return false;
+        }
+
+        return false;
+    }
+
+    bool world::has_tag_in_hierarchy(entity_id entity,tag_id tag,bool include_self)const {
+        if (!is_alive(entity))return false;
+
+        entity_id current = include_self ? entity : parent_of(entity);
+
+        usize visited_count = 0;
+
+        while (current.is_valid()) {
+            if (has_tag(current, tag))return true;
+
+            current = parent_of(current);
+
+            ++visited_count;
+
+            if (visited_count > records_.size())break;
+
+
+        }
+
+        return false;
+    }
+
+    usize world::entity_capacity()const {
+        return records_.size();
+    }
 }
-  

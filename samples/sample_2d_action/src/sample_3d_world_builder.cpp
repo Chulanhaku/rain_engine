@@ -52,6 +52,11 @@ namespace sample_3d
 
         target_world.add_tag(
             result.camera,
+            rain::tag_id{"transform.3d"}
+        );
+
+        target_world.add_tag(
+            result.camera,
             rain::tag_id{"camera.3d"}
         );
 
@@ -121,6 +126,11 @@ namespace sample_3d
 
         target_world.add_tag(
             result.cube,
+            rain::tag_id{"transform.3d"}
+        );
+
+        target_world.add_tag(
+            result.cube,
             rain::tag_id{"object.renderable"}
         );
 
@@ -133,6 +143,8 @@ namespace sample_3d
             result.cube,
             rain::tag_id{"object.rotatable"}
         );
+
+        target_world.add_tag(result.cube, rain::tag_id{"render.frustum_cull"});
 
         result.directional_light =
             target_world.create_entity(

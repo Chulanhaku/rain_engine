@@ -25,7 +25,8 @@ if(rain_build_samples)
     add_subdirectory(samples)
 endif()
 
-# if(rain_build_tests)
-#     add_subdirectory(tests)
-# endif()
+if(rain_build_tests)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
 

@@ -14,6 +14,7 @@ namespace rain {
 		std::string path;
 		texture_2d_handle handle;
 		bool loaded = false;
+        texture_format format = texture_format::rgba8_unorm;
 
 	};
 
@@ -27,11 +28,11 @@ namespace rain {
 		texture_asset_registry(const texture_asset_registry&) = delete;
 		texture_asset_registry&operator =(const texture_asset_registry&)=delete;
 
-		[[nodiscard]] texture_2d_handle load_texture_2d(const char* path);
+		[[nodiscard]] texture_2d_handle load_texture_2d(const char* path, texture_format format = texture_format::rgba8_unorm);
 
 		[[nodiscard]] bool is_loaded(asset_id id)const;
 
-		bool unload_texture_2d(const char* path);
+		bool unload_texture_2d(const char* path, texture_format format = texture_format::rgba8_unorm);
 		bool unload_texture_2d(asset_id id);
 
 		[[nodiscard]] texture_2d_handle find_texture(asset_id id)const;

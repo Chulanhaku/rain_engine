@@ -87,6 +87,8 @@ namespace rain {
 			switch (format) {
 			case texture_format::rgba8_unorm:
 					return DXGI_FORMAT_R8G8B8A8_UNORM;
+            case texture_format::rgba8_unorm_srgb:
+                return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
 
 			}
 
@@ -172,7 +174,8 @@ float4 main(pixel_input input):SV_TARGET{
 	}
 
 	void d3d11_render_backend::clear(const render_clear_color& color) {
-		if (device_context_ == nullptr || render_target_view_ == nullptr) {
+		ID3D11RenderTargetView* target = frame_targets_.color_view(false);
+        if (device_context_ == nullptr || target == nullptr) {
 			return;
 		}
 
@@ -180,8 +183,8 @@ float4 main(pixel_input input):SV_TARGET{
 			color.r,color.g,color.b,color.a
 		};
 
-		device_context_->OMSetRenderTargets(1, & render_target_view_, nullptr);
-		device_context_->ClearRenderTargetView(render_target_view_, clear_color);
+		device_context_->OMSetRenderTargets(1, &target, frame_targets_.depth_view());
+		device_context_->ClearRenderTargetView(target, clear_color);
 	}
 
 	void d3d11_render_backend::draw_debug_triangle() {
@@ -193,6 +196,8 @@ float4 main(pixel_input input):SV_TARGET{
 	void d3d11_render_backend::end_frame() {
 		if (swap_chain_ == nullptr)return;
 
+        frame_targets_.resolve_to(device_context_, back_buffer_);
+
 		const HRESULT present_result = swap_chain_->Present(1, 0);
 
 		if (FAILED(present_result)) {
@@ -202,37 +207,22 @@ float4 main(pixel_input input):SV_TARGET{
 		flush_resource_destruction();
 	}
 
-	void d3d11_render_backend::resize(u32 width, u32 height) {
-		if (width == 0 || height == 0) {
-			return;
-		}
-
-		if (swap_chain_ == nullptr) {
-			return;
-		}
-
-		width_ = width;
-		height_ = height;
-
-		if (device_context_ != nullptr) {
-			device_context_->OMSetRenderTargets(0, nullptr, nullptr);
-		}
-
-		release_com(render_target_view_);
-
-		const HRESULT resize_result = swap_chain_->ResizeBuffers(0, static_cast<UINT>(width_), static_cast<UINT>(height_), DXGI_FORMAT_UNKNOWN, 0);
-
-		if (FAILED(resize_result)) {
-			rain::log_error("D3D11 REsizeBUffer failed:0%08X");
-			return;
-		}
-
-		create_render_target_view();
-		create_depth_stencil();
-		set_viewport();
-
-		rain::log_info("d3d11 resized xu");
-	}
+    void d3d11_render_backend::resize(u32 width, u32 height) {
+        if (width == 0 || height == 0 || swap_chain_ == nullptr) return;
+        device_context_->OMSetRenderTargets(0, nullptr, nullptr);
+        frame_targets_.release();
+        release_com(back_buffer_);
+        const HRESULT result = swap_chain_->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0);
+        if (FAILED(result)) {
+            rain::log_error("D3D11 ResizeBuffers failed; restoring previous framebuffer");
+            create_frame_targets();
+            return;
+        }
+        width_ = width;
+        height_ = height;
+        create_frame_targets();
+        set_viewport();
+    }
 
 	shader_program_handle d3d11_render_backend::create_shader_program(const shader_program_desc& desc) {
 		d3d11_shader_program shader_program;
@@ -527,6 +517,7 @@ float4 main(pixel_input input):SV_TARGET{
 		pipeline.shader = desc.shader;
 		pipeline.topology = desc.topology;
 		pipeline.blend_mode = desc.blend_mode;
+        pipeline.srgb_write_enabled = desc.srgb_write_enabled;
 
 		create_blend_state(desc.blend_mode, &pipeline.blend_state);
 
@@ -575,6 +566,7 @@ float4 main(pixel_input input):SV_TARGET{
 		rasterizer_desc.FrontCounterClockwise = desc.front_counter_clockwise;
 
 		rasterizer_desc.DepthClipEnable = TRUE;
+        rasterizer_desc.MultisampleEnable = TRUE;
 
 		device_->CreateRasterizerState(&rasterizer_desc, &pipeline.rasterizer_state);
 		//rasterizer
@@ -681,7 +673,9 @@ float4 main(pixel_input input):SV_TARGET{
 
 		constexpr float blend_factor[4]{0.0f, 0.0f, 0.0f, 0.0f};
 
-		device_context_->RSSetState(pipeline->rasterizer_state);
+        ID3D11RenderTargetView* target = frame_targets_.color_view(pipeline->srgb_write_enabled);
+        device_context_->OMSetRenderTargets(1, &target, frame_targets_.depth_view());
+        device_context_->RSSetState(pipeline->rasterizer_state);
 
 		device_context_->OMSetDepthStencilState(pipeline->depth_stencil_state,0);
 
@@ -737,10 +731,9 @@ float4 main(pixel_input input):SV_TARGET{
 	void d3d11_render_backend::initialize() {
 		create_device();
 		create_swap_chain();
-		create_render_target_view();
+		create_frame_targets();
 		create_default_sampler();
 		create_debug_triangle_resources();
-		create_depth_stencil();
 		set_viewport();
 
 		rain::log_info("d3d11 render init");
@@ -755,9 +748,8 @@ float4 main(pixel_input input):SV_TARGET{
 		flush_resource_destruction();
 
 		release_render_resources();
-
-
-		release_com(render_target_view_);
+        frame_targets_.release();
+        release_com(back_buffer_);
 		release_com(swap_chain_);
 		release_com(device_context_);
 		release_com(device_);
@@ -985,20 +977,15 @@ float4 main(pixel_input input):SV_TARGET{
 		rain_assert(swap_chain_ != nullptr);
 	}
 
-	void d3d11_render_backend::create_render_target_view() {
-		ID3D11Texture2D* back_buffer = nullptr;
-		const HRESULT get_buffer_result = swap_chain_->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&back_buffer));
-
-		rain_assert(!FAILED(get_buffer_result));
-		rain_assert(back_buffer != nullptr);
-
-		const HRESULT create_rtv_result = device_->CreateRenderTargetView(back_buffer, nullptr, &render_target_view_);
-
-		release_com(back_buffer);
-
-		rain_assert(!FAILED(create_rtv_result));
-		rain_assert(render_target_view_ != nullptr);
-	}
+    void d3d11_render_backend::create_frame_targets() {
+        const HRESULT back_buffer_result = swap_chain_->GetBuffer(
+            0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&back_buffer_));
+        rain_assert(SUCCEEDED(back_buffer_result));
+        const HRESULT result = frame_targets_.create(device_, width_, height_);
+        rain_assert(SUCCEEDED(result));
+        rain::log_info("D3D11 framebuffer: " + std::to_string(frame_targets_.sample_count()) +
+            "x MSAA (" + std::to_string(width_) + "x" + std::to_string(height_) + ")");
+    }
 
 	void d3d11_render_backend::create_debug_triangle_resources() {
 		debug_triangle_shader_ = create_shader_program(shader_program_desc{
@@ -1134,45 +1121,11 @@ float4 main(pixel_input input):SV_TARGET{
 		device_context_->RSSetViewports(1, &viewport);
 	}
 
-	void d3d11_render_backend::create_depth_stencil() {
-		release_com(depth_stencil_view_);
-		release_com(depth_texture_);
-
-		D3D11_TEXTURE2D_DESC texture_desc{};
-
-		texture_desc.Width = width_;
-		texture_desc.Height = height_;
-		texture_desc.MipLevels = 1;
-		texture_desc.ArraySize = 1;
-		texture_desc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
-
-		texture_desc.SampleDesc.Count = 1;
-		texture_desc.Usage = D3D11_USAGE_DEFAULT;
-		texture_desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
-
-		HRESULT result = device_->CreateTexture2D(&texture_desc,nullptr,&depth_texture_);
-
-		rain_assert(!failed(result));
-
-		D3D11_DEPTH_STENCIL_VIEW_DESC view_desc{};
-		view_desc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
-
-		view_desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
-
-		result = device_->CreateDepthStencilView(depth_texture_,&view_desc,&depth_stencil_view_);
-
-		rain_assert(!failed(result));
-
-		device_context_->OMSetRenderTargets(1, &render_target_view_,depth_stencil_view_);
-	}
-
-	void d3d11_render_backend::clear_depth(f32 depth) {
-		if (depth_stencil_view_ == nullptr) {
-			return;
-		}
-
-		device_context_->ClearDepthStencilView(depth_stencil_view_, D3D11_CLEAR_DEPTH, depth, 0);
-	}
+    void d3d11_render_backend::clear_depth(f32 depth) {
+        ID3D11DepthStencilView* view = frame_targets_.depth_view();
+        if (view != nullptr)
+            device_context_->ClearDepthStencilView(view, D3D11_CLEAR_DEPTH, depth, 0);
+    }
 
 	void d3d11_render_backend::set_index_buffer(render_buffer_handle handle, render_index_format format) {
 		d3d11_render_buffer* buffer = buffers_.try_get(handle);

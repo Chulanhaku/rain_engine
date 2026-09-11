@@ -1,0 +1,4 @@
+add_executable(sample_3d_pbr src/main.cpp)
+target_link_libraries(sample_3d_pbr PRIVATE rain_app)
+target_compile_features(sample_3d_pbr PRIVATE cxx_std_20)
+rain_apply_common_options(sample_3d_pbr)

@@ -1,0 +1,80 @@
+任务：检查当前 3D 层级变换、glTF 导入和 mesh_3d shader 接线
+日期：2026-09-08
+
+检查结论
+========
+
+检查时工程无法完成 CMake 生成和编译。mesh_3d.hlsl 本身的 Object/Scene/Material 常量缓冲结构是合理的，主要阻断来自新加入的层级变换和 glTF importer。
+
+一、CMake 生成阻断
+
+1. engine/runtime/include/rain/runtime/tranform_hierarchy_system_3d.hpp
+   - 实际文件名缺少字母 s（tranform）。
+   - engine/runtime/CMakeLists.txt 引用的是 transform_hierarchy_system_3d.hpp。
+   - 结果：CMake Generate 阶段直接失败，后续编译不会开始。
+
+二、transform hierarchy 编译与逻辑问题
+
+1. engine/runtime/src/transform_hierarchy_system_3d.cpp
+   - include 使用 <transform_hierarchy_system_3d.hpp>，没有 rain/runtime 前缀。
+   - local_matrix_of 将 try_get_component 返回的指针直接绑定到引用。
+   - 使用了不存在的变量 inherit_parent，实际声明为 inherits_parent。
+   - 根节点判断使用“!parent_is_candidate || inherits_parent”，会把需要继承父节点的子节点也当作根节点入栈；应重新确认此条件。
+
+2. engine/runtime/src/world.cpp
+   - has_tag_in_hierarchy 使用 visiteed_count，实际变量为 visited_count。
+
+三、render system 编译问题
+
+1. engine/render/src/render_system_3d.cpp
+   - 使用 world_transform_3d_component，但没有包含对应头文件。
+   - object_constants_3d 新增第三个 mat4 后大小为 192 字节，静态断言仍检查 128 字节。
+   - world_transform_3d_component 没有 rotation 字段，不能调用 forward_from_euler(transform.rotation)；该组件已有 forward 字段。
+   - world_transform_3d_component::matrix 是字段，不是 matrix() 函数。
+
+四、glTF importer 编译问题
+
+1. engine/asset/include/rain/asset/gltf_model_3d.hpp
+   - [[nodisacrd]] 应为 [[nodiscard]]。
+   - instantite_gltf_model_3d 拼写与 cpp/sample 使用的 instantiate_gltf_model_3d 不一致。
+   - instantiate/destroy 声明目前位于 gltf_model_3d_instance 结构体内部，但 cpp 实现和 sample 按命名空间自由函数调用。
+
+2. engine/asset/src/gltf_model_3d.cpp
+   - find_attribute 中 attribute.index = index 使用了赋值而不是比较。
+   - return nullptr 缺少分号。
+   - cgltf_float = position[3]{} 缺少变量名位置，应声明 position 数组。
+   - mehs_vertex_3d、mehs_3d_handle 拼写错误。
+   - normal 与 normals 变量混用。
+   - normals 查询错误地使用 cgltf_attribute_type_texcoord，应使用 cgltf_attribute_type_normal。
+   - vertex.uz 应为 vertex.uv。
+   - has_pbr_matallic_roughness 拼写错误，cgltf 字段是 has_pbr_metallic_roughness。
+   - Windows 下 std::filesystem::path::c_str() 返回 wchar_t*，不能传给 load_texture_2d(const char*)。
+   - result.owned_meshes 与结构体字段 owner_meshes 不一致。
+   - destory_gltf_model_3d 与头文件/API 的 destroy_gltf_model_3d 不一致。
+   - 三处 log_error 使用 printf 风格多参数，但当前 log_error 只接收一个 string_view。
+   - instantiate/destroy 实现位于匿名命名空间，无法满足公共 API 链接。
+   - convert_gltf_matrix_to_lh 计算时写回 column_matrix，却最终读取从未赋值的 converted，导入矩阵会成为全零矩阵。
+   - primitive entity 使用标签 tranform.inherit_parent，与系统查询的 transform.inherit_parent 不一致。
+
+五、sample 调用问题
+
+1. samples/sample_2d_action/src/main.cpp
+   - 使用 gltf_model_3d_instance、instantiate_gltf_model_3d、destory_gltf_model_3d 和 transform_hierarchy_system_3d，但当前没有发现相应直接 include。
+   - destory_gltf_model_3d 拼写与预期 destroy API 不一致。
+
+验证结果
+========
+
+1. 原工作区执行 CMake 配置：失败。
+   首个错误：找不到 engine/runtime/include/rain/runtime/transform_hierarchy_system_3d.hpp。
+
+2. 临时副本中绕过文件名及少量前置错误后继续构建：
+   - runtime 可进入编译。
+   - render_system_3d 暴露 world transform include、字段调用和 192/128 字节断言错误。
+   - 继续绕过后，编译器在 gltf_model_3d.cpp 报出上述多处语法、类型和 API 错误。
+
+3. 未修改原工作区源码；本次只新增该检查报告。
+后续处理状态
+============
+
+上述阻断项已在后续“修复3D层级与glTF导入”任务中处理。最终 GCC Debug 构建、D3DCompile、层级矩阵回归和临时 glTF 导入回归均通过。

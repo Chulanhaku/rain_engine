@@ -3,6 +3,7 @@
 #include<rain/core/math/simd_vec3.hpp>
 #include<rain/core/types.hpp>
 
+#include<algorithm>
 #include<cmath>
 
 namespace rain {
@@ -145,11 +146,115 @@ namespace rain {
 
 			return result;
 		}
-		
+
 
 		[[nodiscard]] inline vec3 forward_from_euler(vec3 rotation) {
 			const f32 pitch_cosine = std::cos(rotation.x);
 
 			return normalize(vec3{ .x = std::sin(rotation.y) * pitch_cosine,.y = std::sin(rotation.x),.z = std::cos(rotation.y) * pitch_cosine });
+		}
+
+
+		[[nodiscard]] inline mat4 make_normal_matrix(const mat4& world) {
+			const f32 a00 = world.values[0][0];
+			const f32 a01 = world.values[0][1];
+			const f32 a02 = world.values[0][2];
+
+			const f32 a10 = world.values[1][0];
+			const f32 a11 = world.values[1][1];
+			const f32 a12 = world.values[1][2];
+
+			const f32 a20 = world.values[2][0];
+			const f32 a21 = world.values[2][1];
+			const f32 a22 = world.values[2][2];
+
+			const f32 determinant = a00 * (a11 * a22 - a12 * a21) - a01 * (a10 * a22 - a12 * a20) + a02 * (a10 * a21 - a11 * a20);
+
+			if (std::abs(determinant) <= 0.000001f)return mat4::identity();
+
+			const f32 inverse_determinant = 1.0f / determinant;
+
+			mat4 result = mat4::identity();
+
+			result.values[0][0] =
+				(a11 * a22 - a12 * a21) *
+				inverse_determinant;
+
+			result.values[0][1] =
+				(a12 * a20 - a10 * a22) *
+				inverse_determinant;
+
+			result.values[0][2] =
+				(a10 * a21 - a11 * a20) *
+				inverse_determinant;
+
+			result.values[1][0] =
+				(a02 * a21 - a01 * a22) *
+				inverse_determinant;
+
+			result.values[1][1] =
+				(a00 * a22 - a02 * a20) *
+				inverse_determinant;
+
+			result.values[1][2] =
+				(a01 * a20 - a00 * a21) *
+				inverse_determinant;
+
+			result.values[2][0] =
+				(a01 * a12 - a02 * a11) *
+				inverse_determinant;
+
+			result.values[2][1] =
+				(a02 * a10 - a00 * a12) *
+				inverse_determinant;
+
+			result.values[2][2] =
+				(a00 * a11 - a01 * a10) *
+				inverse_determinant;
+
+			result.values[3][0] = 0.0f;
+			result.values[3][1] = 0.0f;
+			result.values[3][2] = 0.0f;
+
+			return result;
+		}
+
+		[[nodiscard]] inline vec3 transform_point(vec3 point, const mat4& matrix) {
+			const f32 x = point.x * matrix.values[0][0] +
+				point.y * matrix.values[1][0] +
+				point.z * matrix.values[2][0] +
+				matrix.values[3][0];
+
+			const f32 y = point.x * matrix.values[0][1] +
+				point.y * matrix.values[1][1] +
+				point.z * matrix.values[2][1] +
+				matrix.values[3][1];
+
+			const f32 z = point.x * matrix.values[0][2] +
+				point.y * matrix.values[1][2] +
+				point.z * matrix.values[2][2] +
+				matrix.values[3][2];
+
+			const f32 w = point.x * matrix.values[0][3] +
+				point.y * matrix.values[1][3] +
+				point.z * matrix.values[2][3] +
+				matrix.values[3][3];
+
+			if (std::abs(w) > 0.000001f) {
+				const f32 inverse_w = 1.0f / w;
+				return { x * inverse_w,y * inverse_w,z * inverse_w };
+			}
+
+			return { x,y,z };
+		}
+
+		[[nodiscard]] inline f32 max_basis_scale(const mat4& matrix) {
+			const vec3 axis_x{matrix.values[0][0],matrix.values[0][1],matrix.values[0][2]};
+
+			const vec3 axis_y{ matrix.values[1][0],matrix.values[1][1],matrix.values[1][2] };
+
+			const vec3 axis_z{ matrix.values[2][0],matrix.values[2][1],matrix.values[2][2] };
+
+			return std::max(length(axis_x), std::max(length(axis_y), length(axis_z)));
 		}
 }
