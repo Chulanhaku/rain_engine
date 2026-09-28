@@ -17,6 +17,9 @@ using namespace rain;
 #define CHECK(condition) do { if (!(condition)) throw std::runtime_error(     std::string{__func__} + ":" + std::to_string(__LINE__) + " " #condition); } while (false)
 
 void test_pbr_shader();
+void test_cube_rasterization(const mesh_3d_desc& cube,
+    const pipeline_state_desc& normal,const pipeline_state_desc& mirrored,
+    const pipeline_state_desc& double_sided);
 
 namespace {
 struct recording_backend final : render_backend {
@@ -177,6 +180,47 @@ void test_bounds() {
     const auto buffer_count=backend.buffers.size();
     CHECK(!meshes.create({.name="test.mesh",.vertices=vertices,.indices=indices}).is_valid());
     CHECK(backend.buffers.size()==buffer_count);
+}
+
+void test_cube_surface_culling() {
+    recording_backend backend;
+    mesh_3d_registry meshes(backend);
+    material_3d_registry materials;
+    world w;
+    camera_entity(w);
+    const auto cube=meshes.create_cube();
+    const auto material=materials.create({});
+    const auto entity=object_entity(w,cube,material,{0,0,5});
+    render_system_3d renderer(backend,meshes,materials);
+    renderer.prepare(w); renderer.submit();
+    const auto normal=backend.draws.back().pipeline;
+    auto& transform=w.get_component<world_transform_3d_component>(entity);
+    transform.matrix=make_scale({-1,1,1})*make_translation({0,0,5});
+    renderer.prepare(w); renderer.submit();
+    const auto mirrored=backend.draws.back().pipeline;
+    transform.matrix=make_translation({0,0,5});
+    materials.try_get(material)->double_sided=true;
+    renderer.prepare(w); renderer.submit();
+    const auto double_sided=backend.draws.back().pipeline;
+    const auto* mesh=meshes.try_get(cube);
+    const auto& vertex_bytes=backend.buffers.get(mesh->vertex_buffer).bytes;
+    const auto& index_bytes=backend.buffers.get(mesh->index_buffer).bytes;
+    std::vector<mesh_vertex_3d> vertices(vertex_bytes.size()/sizeof(mesh_vertex_3d));
+    std::vector<u32> indices(index_bytes.size()/sizeof(u32));
+    std::memcpy(vertices.data(),vertex_bytes.data(),vertex_bytes.size());
+    std::memcpy(indices.data(),index_bytes.data(),index_bytes.size());
+    CHECK(vertices.size()==24 && indices.size()==36);
+    for (usize i=0;i<indices.size();i+=3) {
+        const auto& a=vertices[indices[i]];
+        const auto& b=vertices[indices[i+1]];
+        const auto& c=vertices[indices[i+2]];
+        const auto geometric_normal=cross(b.position-a.position,c.position-a.position);
+        CHECK(dot(geometric_normal,a.normal)>0);
+        CHECK(dot(geometric_normal,(a.position+b.position+c.position)/3.0f)>0);
+    }
+    test_cube_rasterization({.name="production.cube",.vertices=vertices,.indices=indices},
+        normal,mirrored,double_sided);
+    CHECK(meshes.destroy(cube));
 }
 
 void test_render_prepare_and_submit() {
@@ -359,6 +403,7 @@ int main() {
         test_render_prepare_and_submit(); std::cout<<"PASS prepare, stats, hierarchy tags, GPU constants and draw ordering\n";
         test_transform_hierarchy_culling(); std::cout<<"PASS transform hierarchy to culling integration\n";
         test_gltf_materials(); std::cout<<"PASS glTF factors, maps, alpha, defaults and sRGB cache\n";
+        test_cube_surface_culling(); std::cout<<"PASS cube outward winding and D3D11 surface culling (24 pixel cases)\n";
         test_pbr_shader(); std::cout<<"PASS compiled HLSL and D3D11 WARP pixel regressions\n";
         return 0;
     } catch (const std::exception& error) {

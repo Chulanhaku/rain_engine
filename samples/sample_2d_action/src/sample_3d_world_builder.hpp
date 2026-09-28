@@ -1,19 +1,22 @@
-#include<rain/render/render_handles.hpp>
+#pragma once
 
-#include<rain/runtime/entity.hpp>
-#include<rain/runtime/world.hpp>
+#include <rain/render/render_handles.hpp>
+#include <rain/runtime/world.hpp>
 
 namespace sample_3d {
-	struct sample_3d_world_resources {
-		rain::mesh_3d_handle cube_mesh;
-		rain::material_3d_handle cube_material;
-	};
+struct sample_3d_world_resources {
+    rain::mesh_3d_handle cube_mesh;
+    rain::material_3d_handle cube_material;
+    rain::mesh_3d_handle sphere_mesh;
+};
 
-	struct sample_3d_world_handles {
-		rain::entity_id camera;
-		rain::entity_id cube;
-		rain::entity_id directional_light;
-	};
+struct sample_3d_world_handles {
+    rain::entity_id camera, cube, directional_light;
+    rain::entity_id ground, frozen_cube, floating_cube, kinematic_cube;
+    rain::entity_id sphere, trigger_platform;
+};
 
-	[[nodiscard]] sample_3d_world_handles build_sample_3d_world(rain::world& target_world, const sample_3d_world_resources& resources);
+[[nodiscard]] sample_3d_world_handles build_sample_3d_world(
+    rain::world& target_world, const sample_3d_world_resources& resources);
+void reset_sample_3d_world(rain::world& target_world, const sample_3d_world_handles& handles);
 }

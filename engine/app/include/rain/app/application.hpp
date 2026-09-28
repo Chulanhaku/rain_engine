@@ -12,6 +12,7 @@
 #include<rain/asset/texture_asset_registry.hpp>
 #include <rain/render/mesh_3d_registry.hpp>
 #include <rain/render/material_3d_registry.hpp>
+#include<rain/runtime/fixed_step.hpp>
 
 #include<memory>
 #include<string>
@@ -90,5 +91,8 @@ namespace rain {
 		render_clear_color  clear_color_{};
 
 		input_action_map input_;
+
+		fixed_step_settings fixed_step_settings_{.delta_seconds = 1.0f/60.0f,.max_frame_delta = 0.25f,.max_substeps =8};
+		fixed_step_state fixed_step_state_;
 	};
 }

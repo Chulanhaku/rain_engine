@@ -5,6 +5,9 @@ target_sources(rain_runtime
         src/entity.cpp
         src/world.cpp
         src/movement_system_2d.cpp
+        src/movement_system_3d.cpp
+        src/physics_system_3d.cpp
+        src/camera_input_system_3d.cpp
         src/rotation_system_3d.cpp
         src/transform_hierarchy_system_3d.cpp
         #src/component_storage.cpp
@@ -20,6 +23,14 @@ target_sources(rain_runtime
         include/rain/runtime/movement_system_2d.hpp
         include/rain/runtime/tag_component.hpp
         include/rain/runtime/transform_3d_component.hpp
+        include/rain/runtime/velocity_3d_component.hpp
+        include/rain/runtime/movement_system_3d.hpp
+        include/rain/runtime/rigid_body_3d_component.hpp
+        include/rain/runtime/collider_3d_component.hpp
+        include/rain/runtime/physics_3d.hpp
+        include/rain/runtime/physics_system_3d.hpp
+        include/rain/runtime/camera_input_3d_component.hpp
+        include/rain/runtime/camera_input_system_3d.hpp
         include/rain/runtime/angular_velocity_3d_component.hpp
         include/rain/runtime/rotation_system_3d.hpp
         include/rain/runtime/entity_query.hpp    

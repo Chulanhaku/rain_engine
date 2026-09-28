@@ -1,5 +1,6 @@
 #include <rain/render/mesh_3d_shader_source.hpp>
 #include <rain/render/mesh_3d.hpp>
+#include <rain/render/d3d11/d3d11_rasterizer_state.hpp>
 #include <rain/core/math/mat4.hpp>
 #include <rain/core/math/vec4.hpp>
 
@@ -232,4 +233,82 @@ void test_pbr_shader() {
         check(pixel.x==0 && pixel.y==0 && pixel.z==0,"Zero light direction generates illumination");
     std::cout<<"WARP mean RGB differences: metallic="<<difference(metal,dielectric)
              <<", roughness="<<difference(smooth,rough)<<'\n';
+}
+
+// Render the real primitive with render_system_3d's actual pipeline settings.
+// Read world position so the expected near/far surface is independent of lighting.
+void test_cube_rasterization(const mesh_3d_desc& cube,const pipeline_state_desc& normal,
+    const pipeline_state_desc& mirrored,const pipeline_state_desc& double_sided) {
+    warp_renderer gpu;
+    com<ID3D11Buffer> indices;
+    gpu.make_buffer(gpu.vertices,D3D11_BIND_VERTEX_BUFFER,static_cast<UINT>(cube.vertices.size_bytes()),cube.vertices.data());
+    gpu.make_buffer(indices,D3D11_BIND_INDEX_BUFFER,static_cast<UINT>(cube.indices.size_bytes()),cube.indices.data());
+    constexpr char diagnostic_shader[]=R"(
+        float4 pixel_main(float4 position : SV_POSITION, float3 world : POSITION1) : SV_Target {
+            return float4(world,1);
+        }
+    )";
+    com<ID3DBlob> pixel_blob,error;
+    hr(D3DCompile(diagnostic_shader,sizeof(diagnostic_shader)-1,"cube.surface",nullptr,nullptr,
+        "pixel_main","ps_4_0",D3DCOMPILE_ENABLE_STRICTNESS,0,pixel_blob.out(),error.out()),"Compile cube surface shader");
+    hr(gpu.device.p->CreatePixelShader(pixel_blob.p->GetBufferPointer(),pixel_blob.p->GetBufferSize(),
+        nullptr,gpu.ps.out()),"Create cube surface shader");
+    com<ID3D11Texture2D> depth_texture;
+    com<ID3D11DepthStencilView> depth_view;
+    D3D11_TEXTURE2D_DESC depth_desc{};
+    depth_desc.Width=depth_desc.Height=warp_renderer::size;
+    depth_desc.MipLevels=depth_desc.ArraySize=depth_desc.SampleDesc.Count=1;
+    depth_desc.Format=DXGI_FORMAT_D32_FLOAT; depth_desc.BindFlags=D3D11_BIND_DEPTH_STENCIL;
+    hr(gpu.device.p->CreateTexture2D(&depth_desc,nullptr,depth_texture.out()),"Create cube depth");
+    hr(gpu.device.p->CreateDepthStencilView(depth_texture.p,nullptr,depth_view.out()),"Create cube depth view");
+    const D3D11_VIEWPORT viewport{0,0,static_cast<float>(warp_renderer::size),static_cast<float>(warp_renderer::size),0,1};
+    gpu.context.p->RSSetViewports(1,&viewport);
+    gpu.context.p->IASetInputLayout(gpu.layout.p);
+    gpu.context.p->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    const UINT stride=sizeof(mesh_vertex_3d),offset=0;
+    gpu.context.p->IASetVertexBuffers(0,1,&gpu.vertices.p,&stride,&offset);
+    gpu.context.p->IASetIndexBuffer(indices.p,DXGI_FORMAT_R32_UINT,0);
+    gpu.context.p->VSSetShader(gpu.vs.p,nullptr,0);
+    gpu.context.p->PSSetShader(gpu.ps.p,nullptr,0);
+    gpu.context.p->VSSetConstantBuffers(0,1,&gpu.object.p);
+    gpu.context.p->OMSetRenderTargets(1,&gpu.rtv.p,depth_view.p);
+    const vec3 directions[]={{-1,0,0},{1,0,0},{0,-1,0},{0,1,0},{0,0,-1},{0,0,1}};
+    const char* modes[]={"back culling","mirrored back culling","double sided","front culling"};
+    for (usize mode=0;mode<4;++mode) {
+        auto pipeline=mode==1 ? mirrored : mode==2 ? double_sided : normal;
+        if (mode==3) pipeline.cull_mode=render_cull_mode::front;
+        const auto raster_desc=detail::make_d3d11_rasterizer_desc(pipeline);
+        hr(gpu.device.p->CreateRasterizerState(&raster_desc,gpu.rasterizer.out()),"Create production cube rasterizer");
+        gpu.context.p->RSSetState(gpu.rasterizer.p);
+        D3D11_DEPTH_STENCIL_DESC depth_state{};
+        depth_state.DepthEnable=pipeline.depth_test_enabled;
+        depth_state.DepthWriteMask=pipeline.depth_write_enabled ? D3D11_DEPTH_WRITE_MASK_ALL : D3D11_DEPTH_WRITE_MASK_ZERO;
+        depth_state.DepthFunc=D3D11_COMPARISON_LESS_EQUAL;
+        com<ID3D11DepthStencilState> depth;
+        hr(gpu.device.p->CreateDepthStencilState(&depth_state,depth.out()),"Create cube depth state");
+        gpu.context.p->OMSetDepthStencilState(depth.p,0);
+        for (usize face=0;face<6;++face) {
+            const auto direction=directions[face];
+            const auto world=mode==1 ? make_scale({-1,1,1}) : mat4::identity();
+            const auto view=make_look_at_lh(direction*4,{},std::abs(direction.y)>0.5f ? vec3{0,0,1} : vec3{0,1,0});
+            const mat4 matrices[]={world,world*view*make_perspective_fov_lh(1.04719755f,1,0.1f,20),make_normal_matrix(world)};
+            gpu.context.p->UpdateSubresource(gpu.object.p,0,nullptr,matrices,0,0);
+            const float clear[4]{};
+            gpu.context.p->ClearRenderTargetView(gpu.rtv.p,clear);
+            gpu.context.p->ClearDepthStencilView(depth_view.p,D3D11_CLEAR_DEPTH,1,0);
+            gpu.context.p->DrawIndexed(static_cast<UINT>(cube.indices.size()),0,0);
+            gpu.context.p->CopyResource(gpu.staging.p,gpu.target.p);
+            D3D11_MAPPED_SUBRESOURCE mapped{};
+            hr(gpu.context.p->Map(gpu.staging.p,0,D3D11_MAP_READ,0,&mapped),"Read cube surface");
+            vec4 pixel;
+            std::memcpy(&pixel,static_cast<const char*>(mapped.pData)+(warp_renderer::size/2)*mapped.RowPitch+
+                (warp_renderer::size/2)*sizeof(vec4),sizeof(pixel));
+            gpu.context.p->Unmap(gpu.staging.p,0);
+            const float expected=mode==3 ? -1.0f : 1.0f;
+            const float surface=dot(vec3{pixel.x,pixel.y,pixel.z},direction);
+            if (pixel.w!=1 || std::abs(surface-expected)>0.0001f)
+                throw std::runtime_error(std::string{"Cube "}+modes[mode]+" face "+std::to_string(face)+
+                    " selected wrong surface: expected "+std::to_string(expected)+", got "+std::to_string(surface));
+        }
+    }
 }

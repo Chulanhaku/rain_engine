@@ -29,6 +29,7 @@ target_sources(rain_render
         include/rain/render/render_clear_color.hpp
         include/rain/render/d3d11/d3d11_render_backend.hpp
         include/rain/render/d3d11/d3d11_frame_targets.hpp
+        include/rain/render/d3d11/d3d11_rasterizer_state.hpp
         include/rain/render/render_handles.hpp
         include/rain/render/render_resource_desc.hpp
         include/rain/render/sprite_renderer_2d.hpp

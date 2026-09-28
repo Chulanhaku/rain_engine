@@ -1,0 +1,317 @@
+# 代码变更汇总
+
+任务：修复立方体凹陷外观与面剔除
+日期：2026-09-15
+
+原因：d3d11_render_backend::create_pipeline_state 中，render_cull_mode::front 被映射为 D3D11_CULL_BACK，back 被映射为 D3D11_CULL_FRONT。正常单面 3D 材质请求剔除背面时，实际删除了靠近相机的外表面，留下远侧内壁，因此立方体看起来像凹进去的墙角。立方体的顶点绕序、法线和深度矩阵并无此错误。
+
+## 1. 修改文件列表
+- engine/render/src/d3d11/d3d11_render_backend.cpp（修改）
+- engine/render/include/rain/render/d3d11/d3d11_rasterizer_state.hpp（新增）
+- engine/render/CMakeLists.txt（修改）
+- tests/render_3d_tests.cpp（修改）
+- tests/pbr_shader_tests.cpp（修改）
+- docs/修复立方体凹陷外观与面剔除.txt（新增归档）
+
+没有删除文件。此次 diff 以本轮修改前快照为基准，保留此前尚未提交的 Physics V0 工作。
+
+## 2. 逐文件变更说明
+
+### engine/render/src/d3d11/d3d11_render_backend.cpp
+- 修改函数：d3d11_render_backend::create_pipeline_state。
+- 改动：删除函数内前后面映射颠倒的 rasterizer 状态组装代码，调用 detail::make_d3d11_rasterizer_desc。加入该内部辅助函数的头文件。
+- 原因：修复正常背面剔除实际变为正面剔除的问题；让生产代码和 GPU 回归共用同一状态转换，避免测试再次绕开错误所在层。
+- 影响：使用单面材质的 3D 网格现在正确保留外表面；render_backend 对外接口不变，深度、光照和 MSAA 流程不变。
+
+### engine/render/include/rain/render/d3d11/d3d11_rasterizer_state.hpp（新增）
+- 新增函数：rain::detail::make_d3d11_rasterizer_desc(const pipeline_state_desc&)。
+- 改动：正确映射 none -> D3D11_CULL_NONE、front -> D3D11_CULL_FRONT、back -> D3D11_CULL_BACK。保留 FrontCounterClockwise、DepthClipEnable、MultisampleEnable 和实心填充设置。
+- 原因：枚举名表示要剔除的面，不是需要保留的面。将转换集中为可直接参与实际 GPU 测试的内部函数。
+- 影响：负缩放仍由既有 front_counter_clockwise 翻转补偿；双面/不剔除保持不变，无需修改模型索引或法线。
+
+### engine/render/CMakeLists.txt
+- 修改 rain_render 的公开头文件登记，加入 d3d11_rasterizer_state.hpp。
+- 原因：新状态转换头文件成为后端与测试共用的内部实现。
+- 影响：构建目标与外部链接方式不变，没有新增测试可执行程序。
+
+### tests/render_3d_tests.cpp
+- 新增 test_cube_surface_culling，声明 GPU 回归入口 test_cube_rasterization，并在 main 中调用。
+- 改动：通过真实 mesh_3d_registry::create_cube 取得24个顶点、36个索引，检查12个三角形几何法线与顶点法线一致且朝外。
+- 改动：通过 render_system_3d 实际提交取得普通、镜像和双面材质的管线描述，传入离屏 GPU 检查。
+- 原因：已有 recording_backend 测试只能看到引擎描述，未检测 D3D11 后端将 front/back 映射颠倒的问题。
+- 影响：扩充现有 rain_3d_regressions，不改变运行时接口。
+
+### tests/pbr_shader_tests.cpp
+- 新增 test_cube_rasterization，复用 warp_renderer 的 D3D11 WARP 设备、生产 3D 顶点着色器及浮点读回目标。
+- 改动：创建深度缓冲，使用共享生产 rasterizer 转换，实际绘制立方体；诊断像素着色器直接输出世界位置，使判断不依赖灯光和材质颜色。
+- 改动：从±X、±Y、±Z六个方向，分别验证背面剔除、负缩放背面剔除、双面绘制、正面剔除，共24种像素检查。
+- 判断：前三种模式应显示靠近相机的外表面；主动剔除正面时应显示远侧表面。
+- 原因：既有 PBR 像素测试关闭了面剔除，无法发现本次错误。新增检查同时约束正反面映射、绕序、镜像补偿与深度遮挡。
+- 影响：在无窗口的真实 D3D11 光栅化管线中执行；保留原 PBR 色彩与材质回归。
+
+### docs/修复立方体凹陷外观与面剔除.txt（新增）
+- 保存原因、逐文件说明、验证证据和本次任务 diff 附录。
+- 文档自身不生成自引用 diff；不混入上一轮 Physics V0 的差异。
+
+## 3. 行为变化
+
+- 立方体正确显示外侧表面，不再因外壳被剔除而呈现内凹墙角。
+- 所有采用背面剔除的单面 3D 材质获得同样修复。
+- 已核对立方体与球体绕序正确；glTF 的 Z 轴翻转及索引交换是坐标系转换所需，不做修改。
+- 负缩放、双面材质、2D 默认不剔除、PBR、MSAA 和物理系统保留原有接口与设置。
+
+## 4. 风险点
+
+- 自定义网格仍应遵守正确的外向绕序；不应依靠反向后端映射补偿错误索引。
+- 本轮验证范围为 GCC Debug、D3D11 WARP 像素回归及本机样例运行，未逐一人工查看所有外部模型。
+
+## 5. 建议验证方式
+
+在项目根目录的 Z: 映射路径运行，PATH 中包含 C:/msys64/ucrt64/bin：
+1. cmake --build --preset build_gcc_debug -j 8
+2. ctest --preset test_gcc_debug
+3. build/gcc_debug/samples/sample_2d_action/sample_2d_action.exe
+4. 用 WASD、Q/E、方向键从不同方向观察蓝色/黄色方块和地面外表面。
+
+已完成验证：
+- 修复前，保留原错误映射的新 GPU 测试失败：Cube back culling face 0 selected wrong surface: expected 1.000000, got -1.000000。证实实际选中对侧内壁。
+- 修复后，24种立方体表面像素检查全部通过。
+- GCC Debug 完整构建成功，无新增编译告警。
+- CTest 3/3 通过：Physics V0（41项检查）、3D/PBR、MSAA。
+- 实际 sample_2d_action --frames 180 正常退出（退出码0），日志确认 1280×720、8x MSAA、7个可见物体。
+- git diff --check 通过。
+- 证据：build/cube_culling_before.log、build/cube_culling_after.log、build/cube_culling_smoke.stdout.log、build/cube_culling_smoke.stderr.log。
+
+=== 本次任务 diff 附录 ===
+相对 build/cube_culling_task_baseline 的本轮开始快照。
+
+--- a/engine/render/src/d3d11/d3d11_render_backend.cpp
++++ b/engine/render/src/d3d11/d3d11_render_backend.cpp
+@@ -1,4 +1,5 @@
+ #include <rain/render/d3d11/d3d11_render_backend.hpp>
++#include <rain/render/d3d11/d3d11_rasterizer_state.hpp>
+ 
+ #include<rain/core/assert.hpp>
+ #include<rain/core/log.hpp>
+@@ -547,26 +548,7 @@
+ 		rain_assert(!failed(create_layout_result));
+ 		rain_assert(pipeline.input_layout != nullptr);
+ 		//rasterizer
+-		D3D11_RASTERIZER_DESC rasterizer_desc{};
+-
+-		rasterizer_desc.FillMode = D3D11_FILL_SOLID;
+-
+-		switch (desc.cull_mode) {
+-		case render_cull_mode::none:
+-			rasterizer_desc.CullMode = D3D11_CULL_NONE;
+-			break;
+-		case render_cull_mode::front:
+-			rasterizer_desc.CullMode = D3D11_CULL_BACK;
+-			break;
+-		case render_cull_mode::back:
+-			rasterizer_desc.CullMode = D3D11_CULL_FRONT;
+-			break;
+-		}
+-
+-		rasterizer_desc.FrontCounterClockwise = desc.front_counter_clockwise;
+-
+-		rasterizer_desc.DepthClipEnable = TRUE;
+-        rasterizer_desc.MultisampleEnable = TRUE;
++        const auto rasterizer_desc=detail::make_d3d11_rasterizer_desc(desc);
+ 
+ 		device_->CreateRasterizerState(&rasterizer_desc, &pipeline.rasterizer_state);
+ 		//rasterizer
+--- /dev/null
++++ b/engine/render/include/rain/render/d3d11/d3d11_rasterizer_state.hpp
+@@ -0,0 +1,22 @@
++#pragma once
++
++#include <rain/render/render_resource_desc.hpp>
++#include <d3d11.h>
++
++namespace rain::detail {
++// Shared by production pipeline creation and offscreen D3D11 pixel regressions.
++[[nodiscard]] inline D3D11_RASTERIZER_DESC make_d3d11_rasterizer_desc(const pipeline_state_desc& desc) {
++    D3D11_RASTERIZER_DESC raster{};
++    raster.FillMode=D3D11_FILL_SOLID;
++    // CullMode names identify the faces to discard, not the faces to keep.
++    switch (desc.cull_mode) {
++    case render_cull_mode::none: raster.CullMode=D3D11_CULL_NONE; break;
++    case render_cull_mode::front: raster.CullMode=D3D11_CULL_FRONT; break;
++    case render_cull_mode::back: raster.CullMode=D3D11_CULL_BACK; break;
++    }
++    raster.FrontCounterClockwise=desc.front_counter_clockwise;
++    raster.DepthClipEnable=TRUE;
++    raster.MultisampleEnable=TRUE;
++    return raster;
++}
++}
+--- a/engine/render/CMakeLists.txt
++++ b/engine/render/CMakeLists.txt
+@@ -29,6 +29,7 @@
+         include/rain/render/render_clear_color.hpp
+         include/rain/render/d3d11/d3d11_render_backend.hpp
+         include/rain/render/d3d11/d3d11_frame_targets.hpp
++        include/rain/render/d3d11/d3d11_rasterizer_state.hpp
+         include/rain/render/render_handles.hpp
+         include/rain/render/render_resource_desc.hpp
+         include/rain/render/sprite_renderer_2d.hpp
+--- a/tests/render_3d_tests.cpp
++++ b/tests/render_3d_tests.cpp
+@@ -17,6 +17,9 @@
+ #define CHECK(condition) do { if (!(condition)) throw std::runtime_error(     std::string{__func__} + ":" + std::to_string(__LINE__) + " " #condition); } while (false)
+ 
+ void test_pbr_shader();
++void test_cube_rasterization(const mesh_3d_desc& cube,
++    const pipeline_state_desc& normal,const pipeline_state_desc& mirrored,
++    const pipeline_state_desc& double_sided);
+ 
+ namespace {
+ struct recording_backend final : render_backend {
+@@ -177,6 +180,47 @@
+     const auto buffer_count=backend.buffers.size();
+     CHECK(!meshes.create({.name="test.mesh",.vertices=vertices,.indices=indices}).is_valid());
+     CHECK(backend.buffers.size()==buffer_count);
++}
++
++void test_cube_surface_culling() {
++    recording_backend backend;
++    mesh_3d_registry meshes(backend);
++    material_3d_registry materials;
++    world w;
++    camera_entity(w);
++    const auto cube=meshes.create_cube();
++    const auto material=materials.create({});
++    const auto entity=object_entity(w,cube,material,{0,0,5});
++    render_system_3d renderer(backend,meshes,materials);
++    renderer.prepare(w); renderer.submit();
++    const auto normal=backend.draws.back().pipeline;
++    auto& transform=w.get_component<world_transform_3d_component>(entity);
++    transform.matrix=make_scale({-1,1,1})*make_translation({0,0,5});
++    renderer.prepare(w); renderer.submit();
++    const auto mirrored=backend.draws.back().pipeline;
++    transform.matrix=make_translation({0,0,5});
++    materials.try_get(material)->double_sided=true;
++    renderer.prepare(w); renderer.submit();
++    const auto double_sided=backend.draws.back().pipeline;
++    const auto* mesh=meshes.try_get(cube);
++    const auto& vertex_bytes=backend.buffers.get(mesh->vertex_buffer).bytes;
++    const auto& index_bytes=backend.buffers.get(mesh->index_buffer).bytes;
++    std::vector<mesh_vertex_3d> vertices(vertex_bytes.size()/sizeof(mesh_vertex_3d));
++    std::vector<u32> indices(index_bytes.size()/sizeof(u32));
++    std::memcpy(vertices.data(),vertex_bytes.data(),vertex_bytes.size());
++    std::memcpy(indices.data(),index_bytes.data(),index_bytes.size());
++    CHECK(vertices.size()==24 && indices.size()==36);
++    for (usize i=0;i<indices.size();i+=3) {
++        const auto& a=vertices[indices[i]];
++        const auto& b=vertices[indices[i+1]];
++        const auto& c=vertices[indices[i+2]];
++        const auto geometric_normal=cross(b.position-a.position,c.position-a.position);
++        CHECK(dot(geometric_normal,a.normal)>0);
++        CHECK(dot(geometric_normal,(a.position+b.position+c.position)/3.0f)>0);
++    }
++    test_cube_rasterization({.name="production.cube",.vertices=vertices,.indices=indices},
++        normal,mirrored,double_sided);
++    CHECK(meshes.destroy(cube));
+ }
+ 
+ void test_render_prepare_and_submit() {
+@@ -359,6 +403,7 @@
+         test_render_prepare_and_submit(); std::cout<<"PASS prepare, stats, hierarchy tags, GPU constants and draw ordering\n";
+         test_transform_hierarchy_culling(); std::cout<<"PASS transform hierarchy to culling integration\n";
+         test_gltf_materials(); std::cout<<"PASS glTF factors, maps, alpha, defaults and sRGB cache\n";
++        test_cube_surface_culling(); std::cout<<"PASS cube outward winding and D3D11 surface culling (24 pixel cases)\n";
+         test_pbr_shader(); std::cout<<"PASS compiled HLSL and D3D11 WARP pixel regressions\n";
+         return 0;
+     } catch (const std::exception& error) {
+--- a/tests/pbr_shader_tests.cpp
++++ b/tests/pbr_shader_tests.cpp
+@@ -1,5 +1,6 @@
+ #include <rain/render/mesh_3d_shader_source.hpp>
+ #include <rain/render/mesh_3d.hpp>
++#include <rain/render/d3d11/d3d11_rasterizer_state.hpp>
+ #include <rain/core/math/mat4.hpp>
+ #include <rain/core/math/vec4.hpp>
+ 
+@@ -233,3 +234,81 @@
+     std::cout<<"WARP mean RGB differences: metallic="<<difference(metal,dielectric)
+              <<", roughness="<<difference(smooth,rough)<<'\n';
+ }
++
++// Render the real primitive with render_system_3d's actual pipeline settings.
++// Read world position so the expected near/far surface is independent of lighting.
++void test_cube_rasterization(const mesh_3d_desc& cube,const pipeline_state_desc& normal,
++    const pipeline_state_desc& mirrored,const pipeline_state_desc& double_sided) {
++    warp_renderer gpu;
++    com<ID3D11Buffer> indices;
++    gpu.make_buffer(gpu.vertices,D3D11_BIND_VERTEX_BUFFER,static_cast<UINT>(cube.vertices.size_bytes()),cube.vertices.data());
++    gpu.make_buffer(indices,D3D11_BIND_INDEX_BUFFER,static_cast<UINT>(cube.indices.size_bytes()),cube.indices.data());
++    constexpr char diagnostic_shader[]=R"(
++        float4 pixel_main(float4 position : SV_POSITION, float3 world : POSITION1) : SV_Target {
++            return float4(world,1);
++        }
++    )";
++    com<ID3DBlob> pixel_blob,error;
++    hr(D3DCompile(diagnostic_shader,sizeof(diagnostic_shader)-1,"cube.surface",nullptr,nullptr,
++        "pixel_main","ps_4_0",D3DCOMPILE_ENABLE_STRICTNESS,0,pixel_blob.out(),error.out()),"Compile cube surface shader");
++    hr(gpu.device.p->CreatePixelShader(pixel_blob.p->GetBufferPointer(),pixel_blob.p->GetBufferSize(),
++        nullptr,gpu.ps.out()),"Create cube surface shader");
++    com<ID3D11Texture2D> depth_texture;
++    com<ID3D11DepthStencilView> depth_view;
++    D3D11_TEXTURE2D_DESC depth_desc{};
++    depth_desc.Width=depth_desc.Height=warp_renderer::size;
++    depth_desc.MipLevels=depth_desc.ArraySize=depth_desc.SampleDesc.Count=1;
++    depth_desc.Format=DXGI_FORMAT_D32_FLOAT; depth_desc.BindFlags=D3D11_BIND_DEPTH_STENCIL;
++    hr(gpu.device.p->CreateTexture2D(&depth_desc,nullptr,depth_texture.out()),"Create cube depth");
++    hr(gpu.device.p->CreateDepthStencilView(depth_texture.p,nullptr,depth_view.out()),"Create cube depth view");
++    const D3D11_VIEWPORT viewport{0,0,static_cast<float>(warp_renderer::size),static_cast<float>(warp_renderer::size),0,1};
++    gpu.context.p->RSSetViewports(1,&viewport);
++    gpu.context.p->IASetInputLayout(gpu.layout.p);
++    gpu.context.p->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
++    const UINT stride=sizeof(mesh_vertex_3d),offset=0;
++    gpu.context.p->IASetVertexBuffers(0,1,&gpu.vertices.p,&stride,&offset);
++    gpu.context.p->IASetIndexBuffer(indices.p,DXGI_FORMAT_R32_UINT,0);
++    gpu.context.p->VSSetShader(gpu.vs.p,nullptr,0);
++    gpu.context.p->PSSetShader(gpu.ps.p,nullptr,0);
++    gpu.context.p->VSSetConstantBuffers(0,1,&gpu.object.p);
++    gpu.context.p->OMSetRenderTargets(1,&gpu.rtv.p,depth_view.p);
++    const vec3 directions[]={{-1,0,0},{1,0,0},{0,-1,0},{0,1,0},{0,0,-1},{0,0,1}};
++    const char* modes[]={"back culling","mirrored back culling","double sided","front culling"};
++    for (usize mode=0;mode<4;++mode) {
++        auto pipeline=mode==1 ? mirrored : mode==2 ? double_sided : normal;
++        if (mode==3) pipeline.cull_mode=render_cull_mode::front;
++        const auto raster_desc=detail::make_d3d11_rasterizer_desc(pipeline);
++        hr(gpu.device.p->CreateRasterizerState(&raster_desc,gpu.rasterizer.out()),"Create production cube rasterizer");
++        gpu.context.p->RSSetState(gpu.rasterizer.p);
++        D3D11_DEPTH_STENCIL_DESC depth_state{};
++        depth_state.DepthEnable=pipeline.depth_test_enabled;
++        depth_state.DepthWriteMask=pipeline.depth_write_enabled ? D3D11_DEPTH_WRITE_MASK_ALL : D3D11_DEPTH_WRITE_MASK_ZERO;
++        depth_state.DepthFunc=D3D11_COMPARISON_LESS_EQUAL;
++        com<ID3D11DepthStencilState> depth;
++        hr(gpu.device.p->CreateDepthStencilState(&depth_state,depth.out()),"Create cube depth state");
++        gpu.context.p->OMSetDepthStencilState(depth.p,0);
++        for (usize face=0;face<6;++face) {
++            const auto direction=directions[face];
++            const auto world=mode==1 ? make_scale({-1,1,1}) : mat4::identity();
++            const auto view=make_look_at_lh(direction*4,{},std::abs(direction.y)>0.5f ? vec3{0,0,1} : vec3{0,1,0});
++            const mat4 matrices[]={world,world*view*make_perspective_fov_lh(1.04719755f,1,0.1f,20),make_normal_matrix(world)};
++            gpu.context.p->UpdateSubresource(gpu.object.p,0,nullptr,matrices,0,0);
++            const float clear[4]{};
++            gpu.context.p->ClearRenderTargetView(gpu.rtv.p,clear);
++            gpu.context.p->ClearDepthStencilView(depth_view.p,D3D11_CLEAR_DEPTH,1,0);
++            gpu.context.p->DrawIndexed(static_cast<UINT>(cube.indices.size()),0,0);
++            gpu.context.p->CopyResource(gpu.staging.p,gpu.target.p);
++            D3D11_MAPPED_SUBRESOURCE mapped{};
++            hr(gpu.context.p->Map(gpu.staging.p,0,D3D11_MAP_READ,0,&mapped),"Read cube surface");
++            vec4 pixel;
++            std::memcpy(&pixel,static_cast<const char*>(mapped.pData)+(warp_renderer::size/2)*mapped.RowPitch+
++                (warp_renderer::size/2)*sizeof(vec4),sizeof(pixel));
++            gpu.context.p->Unmap(gpu.staging.p,0);
++            const float expected=mode==3 ? -1.0f : 1.0f;
++            const float surface=dot(vec3{pixel.x,pixel.y,pixel.z},direction);
++            if (pixel.w!=1 || std::abs(surface-expected)>0.0001f)
++                throw std::runtime_error(std::string{"Cube "}+modes[mode]+" face "+std::to_string(face)+
++                    " selected wrong surface: expected "+std::to_string(expected)+", got "+std::to_string(surface));
++        }
++    }
++}

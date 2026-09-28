@@ -70,7 +70,59 @@ namespace rain {
 				current_layer->on_update(context);
 			}
 
-			scheduler_.run_all(target_world_, events_, delta_seconds, frame_index_);
+			const system_run_info variable_run{
+				.delta_seconds = delta_seconds,
+				.interpolation_alpha = fixed_step_state_.interpolation_alpha,
+				.frame_index = frame_index_,
+				.fixed_tick_index = fixed_step_state_.tick_index,
+				.tick_type = system_tick_type::varible
+			}
+
+
+			scheduler_.run_phase(system_phase::pre_update,target_world_, events_, variable_run);
+			scheduler_.run_phase(system_phase::input, target_world_, events_, variable_run);
+			scheduler_.run_phase(system_phase::gameplay, target_world_, events_, variable_run);
+			scheduler_.run_phase(system_phase::movement, target_world_, events_, variable_run);
+
+
+			//physics
+			const f32 physics_frame_delta = std::min(delta_seconds,fixed_step_settings_.max_frame_delta );
+			const f32 max_accumulator = fixed_step_settings_.delta_seconds * static_cast<f32>(fixed_step_settings_.max_substeps);
+			fixed_step_state_.accumulator = std::min(fixed_step_state_.accumulator + physics_frame_delta, max_accumulator);
+
+			u32 substep_count = 0;
+
+			while (fixed_step_state_.accumulator >= fixed_step_settings_.delta_seconds && substep_count < fixed_step_settings_.max_substeps) {
+				const system_run_info fixed_run{
+					.delta_seconds = fixed_step_settings_.delta_seconds,
+					.interpolation_alpha = 0.0f,
+					.frame_index = frame_index,
+					.fixed_tick_index = fixed_step_state_.tick_index,
+					.tick_type = system_tick_type::fixed
+				};
+
+				scheduler_.run_phase(system_phase::physics, target_world_, events_, variable_run);
+				scheduler_.run_phase(system_phase::post_physics, target_world_, events_, variable_run);
+
+				fixed_step_state_.accumulator -= fixed_step_settings_.delta_seconds;
+				++fixed_step_state_.tick_index;
+				++substep_count;
+			}
+
+			//
+			fixed_step_state_.interpolation_alpha = fixed_step_state_.accumulator / fixed_step_settings_.delta_seconds;
+
+			const system_run_info post_run{  
+				.delta_seconds = delta_seconds,
+				.interpolation_alpha = fixed_step_state_.interpolation_alpha,
+				.frame_index = frame_index_,
+				.fixed_tick_index = fixed_step_state_.tick_index,
+				.tick_type = system_tick_type::variable
+			};
+
+			scheduler_.run_phase(system_phase::animation, target_world_, events_, post_run);
+			scheduler_.run_phase(system_phase::post_update, target_world_, events_, post_run);
+			scheduler_.run_phase(system_phase::render_prepare, target_world_, events_, post_run);
 
 			events_.dispatch_all_queued();
 

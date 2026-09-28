@@ -13,9 +13,9 @@
       "binaryDir": "${sourceDir}/build/gcc_debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_C_COMPILER": "gcc",
         "CMAKE_CXX_COMPILER": "g++",
-        "CMAKE_MAKE_PROGRAM": "C:/msys64/ucrt64/bin/ninja.exe"
+        "CMAKE_MAKE_PROGRAM": "C:/msys64/ucrt64/bin/ninja.exe",
+        "rain_build_tests": true
       }
     },
     {
@@ -25,8 +25,8 @@
       "binaryDir": "${sourceDir}/build/gcc_release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_C_COMPILER": "gcc",
-        "CMAKE_CXX_COMPILER": "g++"
+        "CMAKE_CXX_COMPILER": "g++",
+        "rain_build_tests": true
       }
     },
     {
@@ -36,8 +36,8 @@
       "binaryDir": "${sourceDir}/build/clang_debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_C_COMPILER": "clang",
-        "CMAKE_CXX_COMPILER": "clang++"
+        "CMAKE_CXX_COMPILER": "clang++",
+        "rain_build_tests": true
       }
     }
   ],
@@ -53,6 +53,38 @@
     {
       "name": "build_clang_debug",
       "configurePreset": "clang_debug"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "test_gcc_debug",
+      "configurePreset": "gcc_debug",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "test_gcc_release",
+      "configurePreset": "gcc_release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "test_clang_debug",
+      "configurePreset": "clang_debug",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
     }
   ]
 }

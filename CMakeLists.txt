@@ -15,6 +15,10 @@ option(rain_build_editor "build rain editor" OFF)
 option(rain_build_samples "build samples" ON)
 option(rain_build_tests "build tests" OFF)
 
+if(rain_build_tests)
+    enable_testing()
+endif()
+
 add_subdirectory(engine)
 
 # if(rain_build_editor)
@@ -26,7 +30,6 @@ if(rain_build_samples)
 endif()
 
 if(rain_build_tests)
-    enable_testing()
     add_subdirectory(tests)
 endif()
 

@@ -84,4 +84,44 @@ namespace rain
 
         return value * inverse_length;
     }
+
+
+    [[nodiscard]] inline vec3 operator-(vec3 value) {
+        return {
+            -value.x,
+            -value.y,
+            -value.z
+        };
+    }
+
+    [[nodiscard]] inline vec3 operator/(vec3 value, f32 scalar) {
+        return {
+            value.x / scalar,
+            value.y / scalar,
+            value.z / scalar
+        };
+    }
+
+    inline vec3& operator+=(vec3& lhs, vec3 rhs) {
+        lhs.x += rhs.x;
+        lhs.y += rhs.y;
+        lhs.z += rhs.z;
+
+        return lhs;
+    }
+
+    inline vec3& operator-=(vec3& lhs, vec3 rhs) {
+        lhs.x -= rhs.x;
+        lhs.y -= rhs.y;
+        lhs.z -= rhs.z;
+
+        return lhs;
+    }
+
+    inline vec3& operator *=(vec3& lhs, f32 scalar) {
+        lhs.x *= scalar;
+        lhs.y *= scalar;
+        lhs.z *= scalar;
+        return lhs;
+    }
 }

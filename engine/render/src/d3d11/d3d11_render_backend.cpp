@@ -1,4 +1,5 @@
 #include <rain/render/d3d11/d3d11_render_backend.hpp>
+#include <rain/render/d3d11/d3d11_rasterizer_state.hpp>
 
 #include<rain/core/assert.hpp>
 #include<rain/core/log.hpp>
@@ -547,26 +548,7 @@ float4 main(pixel_input input):SV_TARGET{
 		rain_assert(!failed(create_layout_result));
 		rain_assert(pipeline.input_layout != nullptr);
 		//rasterizer
-		D3D11_RASTERIZER_DESC rasterizer_desc{};
-
-		rasterizer_desc.FillMode = D3D11_FILL_SOLID;
-
-		switch (desc.cull_mode) {
-		case render_cull_mode::none:
-			rasterizer_desc.CullMode = D3D11_CULL_NONE;
-			break;
-		case render_cull_mode::front:
-			rasterizer_desc.CullMode = D3D11_CULL_BACK;
-			break;
-		case render_cull_mode::back:
-			rasterizer_desc.CullMode = D3D11_CULL_FRONT;
-			break;
-		}
-
-		rasterizer_desc.FrontCounterClockwise = desc.front_counter_clockwise;
-
-		rasterizer_desc.DepthClipEnable = TRUE;
-        rasterizer_desc.MultisampleEnable = TRUE;
+        const auto rasterizer_desc=detail::make_d3d11_rasterizer_desc(desc);
 
 		device_->CreateRasterizerState(&rasterizer_desc, &pipeline.rasterizer_state);
 		//rasterizer

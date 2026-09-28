@@ -10,6 +10,11 @@
 
 namespace rain{
 
+    enum class system_tick_type :u8 {
+        variable,
+        fixed
+    };
+
     enum class system_phase :u8 {
         pre_update,
         input,
@@ -55,8 +60,14 @@ namespace rain{
         event_system* events = nullptr;
         const entity_query_desc* entity_query = nullptr;
         system_phase phase = system_phase::pre_update;
+
+        system_tick_type tick_type = system_tick_type::variable;
+
         f32 delta_seconds = 0.0f;
+        
+        f32 interpolation_alpha = 0.0f;
         u64 frame_index=0;
+        u64 fixed_tick_index = 0;
     };
 
     struct system_debug_info {
@@ -72,6 +83,15 @@ namespace rain{
         usize required_all_tag_count = 0;
         usize required_any_tag_count = 0;
         usize rejected_tag_count = 0;
+    };
+
+    struct system_run_info {
+        f32 delta_seconds = 0.0f;
+        f32 interpolation_alpha = 0.0f;
+        u64 frame_index = 0;
+        u64 fixed_tick_index = 0;
+
+        system_tick_type tick_type = system_tick_type::variable;
     };
 
     class system_scheduler{
@@ -101,7 +121,7 @@ namespace rain{
         //    rebuild_order_if_needed();
         //}
 
-        void run_phase(system_phase phase,world&target_world,event_system&events, f32 delta_seconds, u64 frame_index){
+        void run_phase(system_phase phase,world&target_world,event_system&events, const system_run_info&run_info){
             rebuild_order_if_needed();
 
             events.begin_frame(frame_index);
@@ -117,8 +137,12 @@ namespace rain{
                     .events = &events,
                     .entity_query = &system.entity_query,
                     .phase = system.phase,
+                    .tick_type = run_info.tick_type,
                     .delta_seconds = delta_seconds,
-                    .frame_index = frame_index
+                    .interpolation_alpha = run_info.interpolation,
+                    .frame_index = frame_index,
+                    .fixed_tick_index = run_info.fixed_tick_index
+
                 };
 
                 system.function(context, system.user_data);
