@@ -3,8 +3,10 @@
 #include<rain/core/event/event_system.hpp>
 #include<rain/core/types.hpp>
 #include<rain/runtime/world.hpp>
+#include<rain/runtime/fixed_step.hpp>
 
 #include<algorithm>
+#include<cmath>
 #include<string>
 #include<vector>
 
@@ -117,36 +119,64 @@ namespace rain{
             order_dirty_=true;
         }
 
-        //void run_all(world&target_world,event_system&events,f32 delta_seconds,u64 frame_index) {
-        //    rebuild_order_if_needed();
-        //}
-
-        void run_phase(system_phase phase,world&target_world,event_system&events, const system_run_info&run_info){
+        void run_phase(system_phase phase,world& target_world,event_system& events,const system_run_info& run_info) {
             rebuild_order_if_needed();
-
-            events.begin_frame(frame_index);
-
-            for (const u32 system_index : sorted_system_indices_) {
-                system_desc& system = systems_[system_index];
-                if (system.phase != phase)continue;
-
-                if (!system.enabled || system.function == nullptr)continue;
-
+            events.begin_frame(run_info.frame_index);
+            for (const u32 index : sorted_system_indices_) {
+                auto& system = systems_[index];
+                if (system.phase!=phase || !system.enabled || !system.function) continue;
                 system_context context{
-                    .target_world = &target_world,
-                    .events = &events,
-                    .entity_query = &system.entity_query,
-                    .phase = system.phase,
-                    .tick_type = run_info.tick_type,
-                    .delta_seconds = delta_seconds,
-                    .interpolation_alpha = run_info.interpolation,
-                    .frame_index = frame_index,
-                    .fixed_tick_index = run_info.fixed_tick_index
-
-                };
-
-                system.function(context, system.user_data);
+                    .target_world=&target_world,.events=&events,.entity_query=&system.entity_query,
+                    .phase=system.phase,.tick_type=run_info.tick_type,.delta_seconds=run_info.delta_seconds,
+                    .interpolation_alpha=run_info.interpolation_alpha,.frame_index=run_info.frame_index,
+                    .fixed_tick_index=run_info.fixed_tick_index};
+                system.function(context,system.user_data);
             }
+        }
+
+        // Production application and headless samples share the same fixed-step runner.
+        // Excess whole steps beyond the budget are discarded; the fractional remainder
+        // is retained for interpolation, preventing an unbounded catch-up backlog.
+        void run_frame(world& target_world,event_system& events,f32 frame_delta,u64 frame_index,
+            const fixed_step_settings& settings,fixed_step_state& state) {
+            const f32 delta = std::isfinite(frame_delta) && frame_delta>0 ? frame_delta : 0.0f;
+            if (!std::isfinite(state.accumulator) || state.accumulator<0) state.accumulator=0;
+            if (!std::isfinite(state.interpolation_alpha)) state.interpolation_alpha=0;
+            system_run_info variable{.delta_seconds=delta,.interpolation_alpha=state.interpolation_alpha,
+                .frame_index=frame_index,.fixed_tick_index=state.tick_index,.tick_type=system_tick_type::variable};
+            for (auto phase : {system_phase::pre_update,system_phase::input,system_phase::gameplay,system_phase::movement})
+                run_phase(phase,target_world,events,variable);
+
+            if (std::isfinite(settings.delta_seconds) && settings.delta_seconds>0 &&
+                std::isfinite(settings.max_frame_delta) && settings.max_frame_delta>0 && settings.max_substeps>0) {
+                const double step = settings.delta_seconds;
+                // Settings/frame deltas enter as float; tolerate their boundary rounding.
+                const double epsilon = step * 0.00001;
+                state.accumulator += std::min(delta,settings.max_frame_delta);
+                u32 count=0;
+                while (state.accumulator+epsilon>=step && count<settings.max_substeps) {
+                    const system_run_info fixed{.delta_seconds=settings.delta_seconds,.interpolation_alpha=0,
+                        .frame_index=frame_index,.fixed_tick_index=state.tick_index,.tick_type=system_tick_type::fixed};
+                    run_phase(system_phase::physics,target_world,events,fixed);
+                    run_phase(system_phase::post_physics,target_world,events,fixed);
+                    state.accumulator = std::max(state.accumulator-step,0.0);
+                    ++state.tick_index;
+                    ++count;
+                }
+                if (state.accumulator+epsilon>=step) {
+                    state.accumulator = std::fmod(state.accumulator,step);
+                    if (state.accumulator+epsilon>=step) state.accumulator=0;
+                }
+                state.interpolation_alpha = std::clamp(static_cast<f32>(state.accumulator/step),
+                    0.0f,std::nextafter(1.0f,0.0f));
+            } else {
+                state.accumulator=0;
+                state.interpolation_alpha=0;
+            }
+            variable.interpolation_alpha=state.interpolation_alpha;
+            variable.fixed_tick_index=state.tick_index;
+            for (auto phase : {system_phase::animation,system_phase::post_update,system_phase::render_prepare})
+                run_phase(phase,target_world,events,variable);
         }
 
         [[nodiscard]] std::vector<system_debug_info>debug_infos()const {

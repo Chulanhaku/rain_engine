@@ -14,6 +14,7 @@ struct sample_3d_world_handles {
     rain::entity_id camera, cube, directional_light;
     rain::entity_id ground, frozen_cube, floating_cube, kinematic_cube;
     rain::entity_id sphere, trigger_platform;
+    rain::entity_id filtered_cube, filter_platform;
 };
 
 [[nodiscard]] sample_3d_world_handles build_sample_3d_world(

@@ -26,6 +26,7 @@ namespace rain {
 		u32 height = 720;
 		bool resizable = true;
 		render_clear_color clear_color{};
+		fixed_step_settings physics_step{};
 	};
 
 	class application {
@@ -92,7 +93,7 @@ namespace rain {
 
 		input_action_map input_;
 
-		fixed_step_settings fixed_step_settings_{.delta_seconds = 1.0f/60.0f,.max_frame_delta = 0.25f,.max_substeps =8};
+		fixed_step_settings fixed_step_settings_;
 		fixed_step_state fixed_step_state_;
 	};
 }

@@ -7,6 +7,8 @@ target_sources(rain_runtime
         src/movement_system_2d.cpp
         src/movement_system_3d.cpp
         src/physics_system_3d.cpp
+        src/physics_world_3d.cpp
+        src/physics_broadphase_3d.cpp
         src/camera_input_system_3d.cpp
         src/rotation_system_3d.cpp
         src/transform_hierarchy_system_3d.cpp
@@ -29,6 +31,10 @@ target_sources(rain_runtime
         include/rain/runtime/collider_3d_component.hpp
         include/rain/runtime/physics_3d.hpp
         include/rain/runtime/physics_system_3d.hpp
+        include/rain/runtime/physics_world_3d.hpp
+        include/rain/runtime/physics_broadphase_3d.hpp
+        include/rain/runtime/collision_filter_3d_component.hpp
+        include/rain/runtime/fixed_step.hpp
         include/rain/runtime/camera_input_3d_component.hpp
         include/rain/runtime/camera_input_system_3d.hpp
         include/rain/runtime/angular_velocity_3d_component.hpp

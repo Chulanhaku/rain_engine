@@ -1,6 +1,8 @@
 #include "sample_physics_3d.hpp"
 #include "sample_3d_world_builder.hpp"
 
+#include <rain/core/log.hpp>
+#include <rain/render/mesh_3d_component.hpp>
 #include <rain/runtime/camera_input_3d_component.hpp>
 #include <rain/runtime/camera_input_system_3d.hpp>
 #include <rain/runtime/collider_3d_component.hpp>
@@ -26,17 +28,13 @@ entity_query_desc movement_query() {
     query.required_components={get_type_id<transform_3d_component>(),get_type_id<velocity_3d_component>()};
     return query;
 }
-entity_query_desc collision_query() {
-    entity_query_desc query;
-    query.required_components={get_type_id<transform_3d_component>(),get_type_id<collider_3d_component>()};
-    return query;
-}
 void kinematic_patrol(system_context& context,void*) {
     if (!context.target_world || !context.entity_query) return;
     auto& w=*context.target_world;
     for (auto e : w.query_entities(*context.entity_query)) {
         if (!w.has_tag_in_hierarchy(e,tag_id{"physics.kinematic"}) ||
-            w.has_tag_in_hierarchy(e,tag_id{"state.frozen"})) continue;
+            w.has_tag_in_hierarchy(e,tag_id{"state.frozen"}) ||
+            w.has_tag_in_hierarchy(e,tag_id{"physics.disabled"})) continue;
         const auto& transform=w.get_component<transform_3d_component>(e);
         auto& velocity=w.get_component<velocity_3d_component>(e);
         if (transform.position.x>=3) velocity.linear.x=-1.5f;
@@ -45,37 +43,60 @@ void kinematic_patrol(system_context& context,void*) {
 }
 }
 
-physics_demo_systems::physics_demo_systems() {
-    auto patrol=movement_query();
-    patrol.required_tags.require_all(tag_id{"sample.kinematic_patrol"});
-    fixed_scheduler.add_system({.system_name="sample.kinematic_patrol", .owner_name="sample_2d_action",
-        .phase=system_phase::movement, .priority=10, .entity_query=patrol, .function=kinematic_patrol});
-    fixed_scheduler.add_system({.system_name="system.movement_3d.kinematic", .owner_name="sample_2d_action",
-        .phase=system_phase::movement, .entity_query=movement_query(), .function=movement_system_3d,
-        .user_data=&kinematic_movement});
-    auto integrate=movement_query();
-    integrate.required_components.push_back(get_type_id<rigid_body_3d_component>());
-    fixed_scheduler.add_system({.system_name="system.physics_integrate_3d", .owner_name="sample_2d_action",
-        .phase=system_phase::physics, .priority=100, .entity_query=integrate,
-        .function=physics_integrate_system_3d, .user_data=&settings});
-    fixed_scheduler.add_system({.system_name="system.physics_collision_3d", .owner_name="sample_2d_action",
-        .phase=system_phase::physics, .entity_query=collision_query(),
-        .function=physics_collision_system_3d, .user_data=&settings});
+void physics_demo_systems::reset(world& w) {
+    simulation.reset();
+    fixed_state={};
+    step_count=collision_enters=trigger_enters=trigger_stays=trigger_exits=0;
+    entity_query_desc query;
+    query.required_components={get_type_id<physics_feedback_component>()};
+    query.require_active=false;
+    for (auto entity : w.query_entities(query)) {
+        auto& feedback=w.get_component<physics_feedback_component>(entity);
+        while (feedback.trigger_contacts>0) {
+            w.remove_tag(entity,tag_id{"state.in_trigger"});
+            --feedback.trigger_contacts;
+        }
+        if (auto* mesh=w.try_get_component<mesh_3d_component>(entity)) mesh->tint=feedback.normal_tint;
+    }
 }
 
-void physics_demo_systems::advance(system_context& context,void* user_data) {
-    if (!context.target_world || !context.events || !user_data ||
-        !std::isfinite(context.delta_seconds) || context.delta_seconds<=0) return;
+void physics_demo_systems::run_test_frame(system_scheduler& scheduler,world& w,
+    event_system& events,f32 delta_seconds,u64 frame_index) {
+    scheduler.run_frame(w,events,delta_seconds,frame_index,fixed_settings,fixed_state);
+}
+
+void physics_demo_systems::consume_events(system_context& context,void* user_data) {
+    if (!context.target_world || !user_data) return;
     auto& physics=*static_cast<physics_demo_systems*>(user_data);
-    constexpr double fixed_step=1.0/120.0;
-    // Bound catch-up work after a debugger pause; this V0 sample intentionally drops excess time.
-    physics.accumulator+=std::min(static_cast<double>(context.delta_seconds),0.25);
-    for (u32 step=0; step<30 && physics.accumulator+1e-9>=fixed_step; ++step) {
-        physics.fixed_scheduler.run_all(*context.target_world,*context.events,
-            static_cast<f32>(fixed_step),context.frame_index);
-        physics.accumulator=std::max(0.0,physics.accumulator-fixed_step);
-        ++physics.step_count;
+    auto& w=*context.target_world;
+    ++physics.step_count;
+    for (const auto& event : physics.simulation.events()) {
+        if (!event.trigger) {
+            if (event.type==collision_event_type_3d::enter) ++physics.collision_enters;
+            continue;
+        }
+        if (event.type==collision_event_type_3d::enter) ++physics.trigger_enters;
+        else if (event.type==collision_event_type_3d::stay) ++physics.trigger_stays;
+        else ++physics.trigger_exits;
+        if (physics.log_events && event.type!=collision_event_type_3d::stay)
+            log_info(std::string{"Trigger "}+(event.type==collision_event_type_3d::enter ? "enter" : "exit")+
+                " at physics tick "+std::to_string(event.fixed_tick_index));
+        for (auto entity : {event.first,event.second}) {
+            auto* feedback=w.try_get_component<physics_feedback_component>(entity);
+            if (!feedback) continue;
+            if (event.type==collision_event_type_3d::enter) {
+                ++feedback->trigger_contacts;
+                w.add_tag(entity,tag_id{"state.in_trigger"});
+            } else if (event.type==collision_event_type_3d::exit && feedback->trigger_contacts>0) {
+                --feedback->trigger_contacts;
+                w.remove_tag(entity,tag_id{"state.in_trigger"});
+            }
+            if (auto* mesh=w.try_get_component<mesh_3d_component>(entity))
+                mesh->tint=feedback->trigger_contacts>0 ? vec4{0.1f,1,1,1} : feedback->normal_tint;
+        }
     }
+    // Consume every fixed step: render frames with several steps never lose enter/exit.
+    physics.simulation.clear_events();
 }
 
 void register_sample_3d_systems(system_scheduler& scheduler,
@@ -90,8 +111,19 @@ void register_sample_3d_systems(system_scheduler& scheduler,
     scheduler.add_system({.system_name="system.movement_3d", .owner_name="sample_2d_action",
         .phase=system_phase::movement, .entity_query=movement, .function=movement_system_3d,
         .user_data=&physics.free_movement});
-    scheduler.add_system({.system_name="sample.physics_fixed_step", .owner_name="sample_2d_action",
-        .phase=system_phase::physics, .entity_query={}, .function=physics_demo_systems::advance, .user_data=&physics});
+    auto patrol=movement_query();
+    patrol.required_tags.require_all(tag_id{"sample.kinematic_patrol"});
+    scheduler.add_system({.system_name="sample.kinematic_patrol", .owner_name="sample_2d_action",
+        .phase=system_phase::physics, .priority=300, .entity_query=patrol, .function=kinematic_patrol});
+    scheduler.add_system({.system_name="system.movement_3d.kinematic", .owner_name="sample_2d_action",
+        .phase=system_phase::physics, .priority=200, .entity_query=movement_query(), .function=movement_system_3d,
+        .user_data=&physics.kinematic_movement});
+    scheduler.add_system({.system_name="system.physics_world_3d", .owner_name="sample_2d_action",
+        .phase=system_phase::physics, .priority=100, .entity_query={},
+        .function=physics_world_system_3d, .user_data=&physics.simulation});
+    scheduler.add_system({.system_name="sample.physics_events", .owner_name="sample_2d_action",
+        .phase=system_phase::post_physics, .entity_query={},
+        .function=physics_demo_systems::consume_events, .user_data=&physics});
     entity_query_desc hierarchy;
     hierarchy.required_components={get_type_id<transform_3d_component>()};
     hierarchy.required_tags.require_all(tag_id{"transform.3d"}).reject(tag_id{"transform.disabled"});
@@ -116,7 +148,7 @@ int run_physics_sample_tests() {
     const auto y=[&](entity_id e) { return w.get_component<transform_3d_component>(e).position.y; };
     bool sphere_bounced=false, sphere_passed_trigger=false;
     for (u64 frame=0;frame<360;++frame) {
-        scheduler.run_all(w,events,1.0f/60.0f,frame);
+        physics.run_test_frame(scheduler,w,events,1.0f/60.0f,frame);
         sphere_bounced |= w.get_component<velocity_3d_component>(h.sphere).linear.y>0.5f;
         sphere_passed_trigger |= y(h.sphere)<1.0f;
     }
@@ -139,7 +171,7 @@ int run_physics_sample_tests() {
     physics_demo_systems other_physics;
     const auto other_h=build_sample_3d_world(other,{});
     register_sample_3d_systems(other_scheduler,other_physics,nullptr);
-    for (u64 frame=0;frame<180;++frame) other_scheduler.run_all(other,other_events,1.0f/30.0f,frame);
+    for (u64 frame=0;frame<180;++frame) other_physics.run_test_frame(other_scheduler,other,other_events,1.0f/30.0f,frame);
     check(other_physics.step_count==physics.step_count &&
         near(other.get_component<transform_3d_component>(other_h.sphere).position.y,y(h.sphere)) &&
         near(other.get_component<transform_3d_component>(other_h.kinematic_cube).position.x,
@@ -148,7 +180,7 @@ int run_physics_sample_tests() {
 
     w.remove_tag(h.frozen_cube,tag_id{"state.frozen"});
     w.remove_tag(h.floating_cube,tag_id{"physics.no_gravity"});
-    for (u64 frame=360;frame<480;++frame) scheduler.run_all(w,events,1.0f/60.0f,frame);
+    for (u64 frame=360;frame<480;++frame) physics.run_test_frame(scheduler,w,events,1.0f/60.0f,frame);
     check(near(y(h.frozen_cube),0.6f),"removing frozen tag resumes falling");
     check(near(y(h.floating_cube),0.6f),"removing no_gravity tag resumes falling");
     reset_sample_3d_world(w,h);
@@ -158,7 +190,7 @@ int run_physics_sample_tests() {
         "reset is idempotent for reference-counted tags");
     w.remove_tag(h.trigger_platform,tag_id{"physics.trigger"});
     w.get_component<rigid_body_3d_component>(h.sphere).restitution=0;
-    for (u64 frame=0;frame<240;++frame) scheduler.run_all(w,events,1.0f/60.0f,frame);
+    for (u64 frame=0;frame<240;++frame) physics.run_test_frame(scheduler,w,events,1.0f/60.0f,frame);
     check(near(y(h.sphere),2.77f),"removing trigger tag makes platform solid");
 
     // Small arrangements exercise runtime rules beyond the visible scene.
@@ -182,28 +214,28 @@ int run_physics_sample_tests() {
     register_sample_3d_systems(motion_scheduler,motion_physics,nullptr);
     const auto moving=add_body(motion,{0,0,0},collider_shape_3d::box,1);
     motion.get_component<velocity_3d_component>(moving).linear={2,0,0};
-    for (u64 frame=0;frame<60;++frame) motion_scheduler.run_all(motion,motion_events,1.0f/60.0f,frame);
+    for (u64 frame=0;frame<60;++frame) motion_physics.run_test_frame(motion_scheduler,motion,motion_events,1.0f/60.0f,frame);
     check(near(motion.get_component<transform_3d_component>(moving).position.x,2),
         "dynamic body is not integrated twice by movement and physics");
     motion.set_entity_active(moving,false);
-    motion_scheduler.run_all(motion,motion_events,0.1f,60);
+    motion_physics.run_test_frame(motion_scheduler,motion,motion_events,0.1f,60);
     check(near(motion.get_component<transform_3d_component>(moving).position.x,2),"inactive body is excluded");
     motion.set_entity_active(moving,true);
     motion.get_component<rigid_body_3d_component>(moving).inverse_mass=0;
-    motion_scheduler.run_all(motion,motion_events,0.1f,61);
+    motion_physics.run_test_frame(motion_scheduler,motion,motion_events,0.1f,61);
     check(near(motion.get_component<transform_3d_component>(moving).position.x,2),"zero inverse mass is immovable");
     const u64 old_steps=motion_physics.step_count;
-    motion_scheduler.run_all(motion,motion_events,-1,62);
-    motion_scheduler.run_all(motion,motion_events,std::numeric_limits<f32>::quiet_NaN(),63);
+    motion_physics.run_test_frame(motion_scheduler,motion,motion_events,-1,62);
+    motion_physics.run_test_frame(motion_scheduler,motion,motion_events,std::numeric_limits<f32>::quiet_NaN(),63);
     check(motion_physics.step_count==old_steps,"invalid time does not advance physics");
-    motion_scheduler.run_all(motion,motion_events,10,64);
+    motion_physics.run_test_frame(motion_scheduler,motion,motion_events,10,64);
     check(motion_physics.step_count-old_steps==30,"long frames bound catch-up to 30 substeps");
 
-    auto query=collision_query();
-    const auto collide=[&](world& target) {
-        system_context context{.target_world=&target,.entity_query=&query,
-            .phase=system_phase::physics,.delta_seconds=1.0f/120.0f};
-        physics_collision_system_3d(context,nullptr);
+    const auto collide=[](world& target) {
+        physics_world_3d simulation;
+        // The public world step includes integration; use a minimal positive step
+        // to isolate the existing contact/impulse oracle without another solver API.
+        simulation.step(target,0.000001f,0);
     };
     world pair;
     const auto a=add_body(pair,{0,0,0},collider_shape_3d::box,1);
@@ -258,12 +290,12 @@ int run_physics_sample_tests() {
     check(inherited.set_parent(child,parent),"physics parent setup");
     inherited.get_component<velocity_3d_component>(child).linear={1,0,0};
     for (u64 frame=0;frame<60;++frame)
-        inherited_scheduler.run_all(inherited,inherited_events,1.0f/60.0f,frame);
+        inherited_physics.run_test_frame(inherited_scheduler,inherited,inherited_events,1.0f/60.0f,frame);
     const auto child_position=inherited.get_component<world_transform_3d_component>(child).position;
     check(near(child_position.x,8) && near(child_position.y,0),
         "world-space physics velocity survives rotated scaled parent and inherited no_gravity");
     inherited.add_tag(parent,tag_id{"state.frozen"});
-    inherited_scheduler.run_all(inherited,inherited_events,0.1f,60);
+    inherited_physics.run_test_frame(inherited_scheduler,inherited,inherited_events,0.1f,60);
     check(near(inherited.get_component<world_transform_3d_component>(child).position.x,8),
         "parent frozen tag suspends child physics");
 
@@ -272,14 +304,24 @@ int run_physics_sample_tests() {
     inherited.remove_tag(child,tag_id{"object.movable"});
     inherited.get_component<velocity_3d_component>(child).linear={0,1,0};
     const auto local_before=inherited.get_component<transform_3d_component>(child).position;
-    inherited_physics.accumulator=0;
-    inherited_scheduler.run_all(inherited,inherited_events,1.0f/240.0f,61);
+    inherited_physics.fixed_state.accumulator=0;
+    inherited_physics.run_test_frame(inherited_scheduler,inherited,inherited_events,1.0f/240.0f,61);
     check(near(inherited.get_component<transform_3d_component>(child).position.y,local_before.y),
         "inherited kinematic body waits for a fixed step");
-    inherited_scheduler.run_all(inherited,inherited_events,1.0f/240.0f,62);
+    inherited_physics.run_test_frame(inherited_scheduler,inherited,inherited_events,1.0f/240.0f,62);
     check(near(inherited.get_component<transform_3d_component>(child).position.y,
         local_before.y+1.0f/120.0f,0.00001f),
         "inherited kinematic body moves once at fixed rate without object.movable");
+
+    const auto before_disabled=inherited.get_component<transform_3d_component>(child).position;
+    inherited.add_tag(parent,tag_id{"physics.disabled"});
+    inherited_physics.run_test_frame(inherited_scheduler,inherited,inherited_events,0.1f,63);
+    check(near(inherited.get_component<transform_3d_component>(child).position.y,before_disabled.y),
+        "inherited physics.disabled suspends kinematic movement");
+    inherited.remove_tag(parent,tag_id{"physics.disabled"});
+    inherited_physics.run_test_frame(inherited_scheduler,inherited,inherited_events,0.1f,64);
+    check(near(inherited.get_component<transform_3d_component>(child).position.y,before_disabled.y+0.1f),
+        "removing inherited physics.disabled resumes kinematic movement");
 
     camera_input_3d_component camera_controls;
     transform_3d_component camera_transform;
@@ -337,7 +379,11 @@ int run_physics_sample_tests() {
     camera_input_system_3d(camera_context,&idle_input);
     check(near(length(camera_world.get_component<velocity_3d_component>(camera_entity).linear),0),
         "removing camera.input clears residual movement");
-    std::printf("Physics V0 sample: %d checks, %d failures\n",checks,failures);
+    check(physics.trigger_enters>0 && physics.trigger_exits>0,"sample consumes trigger enter and exit events");
+    const auto world_tests=run_physics_world_tests();
+    checks+=world_tests.checks;
+    failures+=world_tests.failures;
+    std::printf("Physics World sample: %d checks, %d failures\n",checks,failures);
     return failures==0 ? 0 : 1;
 }
 }

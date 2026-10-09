@@ -1,10 +1,12 @@
 #include "sample_3d_world_builder.hpp"
+#include "sample_physics_3d.hpp"
 
 #include <rain/render/camera_3d.hpp>
 #include <rain/render/directional_light_3d_component.hpp>
 #include <rain/render/mesh_3d_component.hpp>
 #include <rain/runtime/camera_input_3d_component.hpp>
 #include <rain/runtime/collider_3d_component.hpp>
+#include <rain/runtime/collision_filter_3d_component.hpp>
 #include <rain/runtime/rigid_body_3d_component.hpp>
 #include <rain/runtime/transform_3d_component.hpp>
 #include <rain/runtime/velocity_3d_component.hpp>
@@ -32,6 +34,10 @@ entity_id create_body(world& w, const sample_3d_world_resources& resources,
         .inverse_mass=std::string_view{mode} == "physics.dynamic" ? 1.0f : 0.0f,
         .restitution=sphere ? 0.65f : 0.0f});
     w.add_component<velocity_3d_component>(entity);
+    w.add_component<collision_filter_3d_component>(entity);
+    w.add_tag(entity,tag_id{"physics.collider"});
+    if (std::string_view{mode}!="physics.static")
+        w.add_component<physics_feedback_component>(entity,physics_feedback_component{.normal_tint=color});
     for (const char* tag : {"transform.3d", "object.renderable", "render.3d",
                             "render.frustum_cull", "object.movable"})
         w.add_tag(entity, tag_id{tag});
@@ -53,6 +59,7 @@ sample_3d_world_handles build_sample_3d_world(world& w,
 
     result.ground = create_body(w, resources, "physics.ground", {0,-0.5f,1}, {9,0.5f,6},
         {0.26f,0.31f,0.38f,1}, "physics.static");
+    w.get_component<collision_filter_3d_component>(result.ground).layer=collision_layer_3d::world;
     result.cube = create_body(w, resources, "physics.cube", {-4,4,0}, {0.65f,0.65f,0.65f},
         {0.10f,0.52f,1,1}, "physics.dynamic");
     result.frozen_cube = create_body(w, resources, "physics.frozen", {-1.5f,3,0}, {0.6f,0.6f,0.6f},
@@ -65,8 +72,15 @@ sample_3d_world_handles build_sample_3d_world(world& w,
     result.trigger_platform = create_body(w, resources, "physics.trigger_platform", {4,2,-1}, {1.2f,0.12f,1.2f},
         {0.9f,0.2f,0.32f,1}, "physics.static");
     w.add_tag(result.trigger_platform, tag_id{"physics.trigger"});
+    w.get_component<collision_filter_3d_component>(result.trigger_platform).layer=collision_layer_3d::trigger;
     result.sphere = create_body(w, resources, "physics.sphere", {4,5,-1}, {0.65f,0.65f,0.65f},
         {1,0.4f,0.10f,1}, "physics.dynamic", true);
+
+    result.filter_platform = create_body(w,resources,"physics.filter_platform",{-6,2,2},{1.1f,0.12f,1.1f},
+        {0.1f,0.7f,0.75f,1},"physics.static");
+    w.get_component<collision_filter_3d_component>(result.filter_platform).layer=collision_layer_3d::enemy;
+    result.filtered_cube = create_body(w,resources,"physics.filtered_cube",{-6,5,2},{0.5f,0.5f,0.5f},
+        {0.9f,0.9f,0.95f,1},"physics.dynamic");
 
     result.directional_light = w.create_entity({.name=string_id{"entity.sun"}});
     w.add_component<directional_light_3d_component>(result.directional_light,
@@ -87,12 +101,15 @@ void reset_sample_3d_world(world& w, const sample_3d_world_handles& h) {
         w.get_component<velocity_3d_component>(e).linear={};
         w.remove_tag(e, tag_id{"state.frozen"});
         w.remove_tag(e, tag_id{"physics.no_gravity"});
+        w.remove_tag(e, tag_id{"physics.disabled"});
     };
     reset_body(h.cube, {-4,4,0});
     reset_body(h.frozen_cube, {-1.5f,3,0});
     reset_body(h.floating_cube, {1,3,2.5f});
     reset_body(h.kinematic_cube, {-3,0.5f,3});
     reset_body(h.sphere, {4,5,-1});
+    reset_body(h.filtered_cube, {-6,5,2});
+    w.get_component<collision_filter_3d_component>(h.filtered_cube).mask=collision_layer_3d::world;
     w.add_tag(h.frozen_cube, tag_id{"state.frozen"});
     w.add_tag(h.floating_cube, tag_id{"physics.no_gravity"});
     w.get_component<velocity_3d_component>(h.kinematic_cube).linear={1.5f,0,0};

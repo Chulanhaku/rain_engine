@@ -1,0 +1,2849 @@
+# Physics World 固定步长与碰撞事件完善
+日期：2026-09-30
+基线提交：5f90fddca78fd3220befd78adc57b17dd3ad3140
+本文件前部为自然语言代码变更汇总，末尾归档本次代码 diff。历史任务文档保持原样。
+
+## 代码变更汇总
+
+### 1. 修改文件列表
+
+- [修改] engine/runtime/include/rain/runtime/collision_filter_3d_component.hpp
+- [修改] engine/runtime/include/rain/runtime/physics_broadphase_3d.hpp
+- [修改] engine/runtime/src/physics_broadphase_3d.cpp
+- [修改] engine/runtime/include/rain/runtime/physics_world_3d.hpp
+- [删除/由正确路径替代] engine/runtime/src/physcis_world_3d.cpp
+- [新增] engine/runtime/src/physics_world_3d.cpp
+- [修改] engine/runtime/include/rain/runtime/physics_system_3d.hpp
+- [修改] engine/runtime/src/physics_system_3d.cpp
+- [修改] engine/runtime/src/movement_system_3d.cpp
+- [修改] engine/runtime/include/rain/runtime/fixed_step.hpp
+- [修改] engine/runtime/include/rain/runtime/system_scheduler.hpp
+- [修改] engine/app/include/rain/app/application.hpp
+- [修改] engine/app/src/application.cpp
+- [修改] engine/runtime/CMakeLists.txt
+- [修改] samples/sample_2d_action/CMakeLists.txt
+- [修改] samples/sample_2d_action/src/main.cpp
+- [修改] samples/sample_2d_action/src/sample_physics_3d.hpp
+- [修改] samples/sample_2d_action/src/sample_physics_3d.cpp
+- [修改] samples/sample_2d_action/src/sample_3d_world_builder.hpp
+- [修改] samples/sample_2d_action/src/sample_3d_world_builder.cpp
+- [新增] samples/sample_2d_action/src/sample_physics_world_tests.cpp
+- [新增] docs/Physics World 固定步长与碰撞事件完善.txt
+
+### 2. 逐文件变更说明
+
+#### engine/runtime/include/rain/runtime/collision_filter_3d_component.hpp（修改）
+- 修改函数 / 类 / 数据结构：collision_layer_3d、collision_filter_3d_component、collision_filters_match
+- 改动内容：将 all 修正为全 32 位掩码；过滤函数双方参数改为 const 引用，按 first.mask & second.layer 和 second.mask & first.layer 双向匹配。保留独立过滤组件，未把 layer/mask 塞入 collider。
+- 修改原因：原移位表达式超出有效位宽，旧 mask 对 mask 判断也不能表达碰撞层关系。
+- 影响范围：层字段定义保持可用；默认层为 1、默认接受全部层。缺少过滤组件的旧物体使用同样默认值。
+
+#### engine/runtime/include/rain/runtime/physics_broadphase_3d.hpp（修改）
+- 修改函数 / 类 / 数据结构：physics_aabb_3d、broadphase_proxy_3d、broadphase_pair_3d、physics_broadphase_3d
+- 改动内容：完善代理、候选对和访问接口；修正代理默认过滤值；增加完整 entity_id 到代理索引的哈希表，明确定义 add 后必须重新 build_pairs。
+- 修改原因：使候选筛选成为可独立测试的模块，并避免每次新增代理都线性扫描所有代理。
+- 影响范围：保留 clear/add/build_pairs/pairs/proxy_count/pair_count 接口；默认代理可以正常参与碰撞。
+
+#### engine/runtime/src/physics_broadphase_3d.cpp（修改）
+- 修改函数 / 类 / 数据结构：physics_broadphase_3d::clear/add/build_pairs/pairs/proxy_count/pair_count；entity_key/valid_bounds/overlaps
+- 改动内容：替换未完成实现；按 X 轴排序并提前终止扫描，再检查 Y/Z、双向 layer/mask 与静态配对规则；输出按 index+generation 规范排序。add 更新重复实体、拒绝无效 ID/非有限/倒置 AABB，非法更新会移除该实体旧代理；clear 同时清空索引与候选。
+- 修改原因：修复命名空间、拼写与排序错误，避免重复候选、悬空代理和非确定事件顺序。
+- 影响范围：边界相切计为候选；静态-静态实体只在至少一方为 trigger 时进入候选；最坏密集场景仍可能有平方数量的真实候选。
+
+#### engine/runtime/include/rain/runtime/physics_world_3d.hpp（修改）
+- 修改函数 / 类 / 数据结构：collision_event_3d、collision_pair_key_3d、collision_pair_hash_3d、active_collision_3d、physics_world_3d_stats、physics_world_3d
+- 改动内容：修复错误类型名、重复统计字段和非法结构体名称；补齐 step/events/clear_events/reset/stats/settings API 与 const 访问；事件增加 fixed_tick_index，明确法线为 second 指向 first。接触缓存使用包含 generation 的哈希键与配对列表。
+- 修改原因：将草稿补成有状态、可编译并可消费事件的接口，避免实体索引复用串接旧碰撞；显式 hasher 也消除 std::hash 特化时机和窄平台移位问题。
+- 影响范围：每个 ECS world 应持有独立 Physics World；事件跨步累积到 clear_events，reset 清除接触缓存/事件/统计。退出事件可能包含已经销毁的 entity_id。
+
+#### engine/runtime/src/physcis_world_3d.cpp（删除/由正确路径替代）
+- 修改函数 / 类 / 数据结构：删除拼错路径的未完成 physics_world_3d 草稿
+- 改动内容：删除原未纳入构建且包含大量拼写/接口错误的文件，功能整合到 physics_world_3d.cpp。
+- 修改原因：避免两个名称近似文件并存，或以后误把不可编译草稿加入构建。
+- 影响范围：属于路径修正与实现替换；CMake 仅编译正确文件名。
+
+#### engine/runtime/src/physics_world_3d.cpp（新增）
+- 修改函数 / 类 / 数据结构：physics_world_3d 全部方法；current_world_matrix/parent_world_matrix/translate_world/dynamic_inverse_mass；make_world_aabb/make_world_sphere/intersect_* /resolve_collision
+- 改动内容：新增正确文件名的实现，迁移原重力、指数阻尼、逆质量冲量与位置修正，保留世界速度和父级变换计算。step 依次积分、构建 Broadphase、窄相求解、生成事件；碰撞对每步最多产生一次 enter/stay，类型切换先 exit 再 enter。禁用/失活/移除碰撞体/销毁/改变 mask 都能退出。球-球、球-盒、盒-盒支持接触容差且不产生负穿透修正；solver_iterations=0 仍检测事件。统计记录有效碰撞体、候选对、实际窄相调用和唯一接触数量。
+- 修改原因：完成用户新增 Physics World 的运行链，替代旧全配对循环；防止求解迭代重复发事件及静止接触 enter/exit 闪烁。
+- 影响范围：只接受有限正步长；physics.disabled 支持层级继承。旧组件场景无需新增强制筛选 Tag；physics.collider 在样例中用于分类，不作为硬性门槛。
+
+#### engine/runtime/include/rain/runtime/physics_system_3d.hpp（修改）
+- 修改函数 / 类 / 数据结构：physics_world_system_3d 声明和调用约定
+- 改动内容：删除已注释的旧 integrate/collision 声明和过期说明；明确注册到 fixed physics 阶段，user_data 指向长期存活的 physics_world_3d。
+- 修改原因：让接口文档与有状态世界的所有权一致。
+- 影响范围：样例已迁移到新入口；外部旧调用方也应改为此入口并持有 Physics World。
+
+#### engine/runtime/src/physics_system_3d.cpp（修改）
+- 修改函数 / 类 / 数据结构：physics_world_system_3d；移出 physics_integrate_system_3d/physics_collision_system_3d 与形状辅助函数
+- 改动内容：文件收敛为调度适配器；修复 user_data = nullptr 的赋值错误，检查空指针后把 dt 和 fixed_tick_index 传入 Physics World。旧求解逻辑已迁移，删除末尾未完成的 make_broadphase_aabb 草稿。
+- 修改原因：统一物理入口和缓存所有权，避免旧/新系统同时执行。
+- 影响范围：物理参数现在通过 physics_world_3d::settings 修改，user_data 不再传 physics_settings_3d。
+
+#### engine/runtime/src/movement_system_3d.cpp（修改）
+- 修改函数 / 类 / 数据结构：movement_system_3d
+- 改动内容：运动学物体新增继承 physics.disabled 的跳过条件，保留动态刚体由物理系统独占积分的规则。
+- 修改原因：否则禁用物理后，kinematic 物体仍被 movement 更新位置。
+- 影响范围：影响运动学物体；普通相机和自由移动仍按原逻辑运行。
+
+#### engine/runtime/include/rain/runtime/fixed_step.hpp（修改）
+- 修改函数 / 类 / 数据结构：fixed_step_settings、fixed_step_state
+- 改动内容：默认固定步长设为 1/120 秒、最大帧输入 0.25 秒、每帧最多 30 步；accumulator 从 float 改为 double。
+- 修改原因：旧默认 max_substeps=0 会使物理不运行；双精度累计减少帧边界误差。
+- 影响范围：字段名保持；可通过 application_desc.physics_step 覆盖默认设置；状态结构二进制布局改变。
+
+#### engine/runtime/include/rain/runtime/system_scheduler.hpp（修改）
+- 修改函数 / 类 / 数据结构：system_scheduler::run_phase、新增 run_frame
+- 改动内容：修正 run_phase 对 dt/frame_index/interpolation_alpha 的错误引用，转发完整 system_run_info。run_frame 先执行变量阶段，再逐步执行 physics/post_physics，最后执行 animation/post_update/render_prepare；处理非法时间、零预算、卡帧补算上限与余数 alpha，增加浮点边界容差。保留旧 run_all 单遍接口。
+- 修改原因：应用和无窗口测试必须使用同一调度算法；修复构造 fixed_run 却传 variable_run 的问题，并避免重度卡帧积压。
+- 影响范围：使用 run_frame 的调用方显式持有 settings/state；超预算整步会丢弃，alpha 始终小于 1；run_all 不会自动变成固定调度。
+
+#### engine/app/include/rain/app/application.hpp（修改）
+- 修改函数 / 类 / 数据结构：application_desc、application 的固定步长配置成员
+- 改动内容：在描述结构末尾增加 physics_step，移除成员上硬编码的 60 Hz/8 步配置。
+- 修改原因：让应用统一使用引擎默认值并支持调用者配置。
+- 影响范围：原有指定初始化保持可用；应用可以设置自己的物理频率。
+
+#### engine/app/src/application.cpp（修改）
+- 修改函数 / 类 / 数据结构：application::application、application::run
+- 改动内容：构造时接收 desc.physics_step；run 用 scheduler.run_frame 替换半成品的重复固定步循环，计时器改为 steady_clock。
+- 修改原因：消除重复累积/错误 tick 信息和系统时钟跳变造成的时间问题。
+- 影响范围：物理默认 120 Hz；输入、普通 movement、渲染仍每显示帧一次，物理事件每固定步消费。
+
+#### engine/runtime/CMakeLists.txt（修改）
+- 修改函数 / 类 / 数据结构：rain_runtime 的 target_sources
+- 改动内容：加入 physics_world_3d.cpp、physics_broadphase_3d.cpp，以及 World/Broadphase/filter/fixed_step 公共头文件。
+- 修改原因：新模块必须实际参与编译和链接，不能只存在于源码目录。
+- 影响范围：链接 rain_runtime 即可使用新的物理世界；未引入第三方依赖。
+
+#### samples/sample_2d_action/CMakeLists.txt（修改）
+- 修改函数 / 类 / 数据结构：sample_2d_action 的 target_sources、set_tests_properties
+- 改动内容：编译新增 sample_physics_world_tests.cpp；沿用 rain_physics_v0_regressions 名称和 --physics-test 入口，并追加 physics_world 测试标签。
+- 修改原因：保持现有 CTest 调用兼容，同时让新增行为进入自动测试。
+- 影响范围：原构建目标和命令可继续使用。
+
+#### samples/sample_2d_action/src/main.cpp（修改）
+- 修改函数 / 类 / 数据结构：sample_layer::on_attach/on_update/on_detach/bind_input_actions、main
+- 改动内容：接入 Physics World 注册和事件日志；P 切换蓝色方块 physics.disabled，L 切换白色方块平台碰撞并重新落下，R 同时重置物理缓存与场景；退出打印候选、窄相、接触和 enter/stay/exit 统计；更新窗口标题和操作说明。
+- 修改原因：让新增物理能力可以直接操作观察，并使运行日志可以验证完整调用链。
+- 影响范围：保留 WASD/QE/方向键/Shift、Space/F/V/G/T、Tab/H/B 和 --frames/--physics-test 入口。
+
+#### samples/sample_2d_action/src/sample_physics_3d.hpp（修改）
+- 修改函数 / 类 / 数据结构：新增 physics_feedback_component、physics_sample_test_result；调整 physics_demo_systems
+- 改动内容：样例持有 physics_world_3d、事件计数、触发器颜色和 Tag 引用计数；移除嵌套 fixed_scheduler/advance，改为共享帧测试入口 run_test_frame，增加 reset/consume_events。
+- 修改原因：避免样例和应用各自维护一套物理时钟；清楚表达事件状态所有权。
+- 影响范围：仅影响样例内部组织；注册时 physics_demo_systems 的地址必须保持稳定。
+
+#### samples/sample_2d_action/src/sample_physics_3d.cpp（修改）
+- 修改函数 / 类 / 数据结构：register_sample_3d_systems、physics_demo_systems::reset/run_test_frame/consume_events、kinematic_patrol、run_physics_sample_tests
+- 改动内容：注册 camera input、自由 movement、固定 patrol/kinematic movement/Physics World、post_physics 事件消费、post_update hierarchy。触发器进入增加 state.in_trigger，退出仅减少自己持有的引用，重叠触发器不会误清状态；颜色跟随触发状态，销毁实体安全跳过。原行为测试迁移到共享 runner，并补充继承禁用运动学测试及新测试汇总。
+- 修改原因：让 Tag-driven Physics 和碰撞事件在真实样例中形成完整链路，同时防止多子步事件丢失和引用计数泄漏。
+- 影响范围：保持原物理/相机/层级效果；R 重置清除本样例拥有的事件状态，应用全局 fixed tick 继续单调递增。
+
+#### samples/sample_2d_action/src/sample_3d_world_builder.hpp（修改）
+- 修改函数 / 类 / 数据结构：sample_3d_world_handles
+- 改动内容：增加 filtered_cube 和 filter_platform 句柄。
+- 修改原因：让输入和测试可定位碰撞层示例实体。
+- 影响范围：仅扩展样例场景返回数据。
+
+#### samples/sample_2d_action/src/sample_3d_world_builder.cpp（修改）
+- 修改函数 / 类 / 数据结构：create_body、build_sample_3d_world、reset_sample_3d_world
+- 改动内容：为物理实体添加过滤组件与分类 Tag，为非静态物体添加触发反馈组件；地面归 world 层、红平台归 trigger 层；新增白色动态立方体和青色 enemy 层平台。白色方块初始仅碰 world，可穿过平台后落地；重置恢复过滤掩码、位置和速度，清除样例禁用状态。
+- 修改原因：提供可见的层过滤、真实地面、触发器及 Tag 控制示例。
+- 影响范围：默认可渲染物体由 7 个增至 9 个；保留既有相机、灯光、球体及各类方块。
+
+#### samples/sample_2d_action/src/sample_physics_world_tests.cpp（新增）
+- 修改函数 / 类 / 数据结构：新增 run_physics_world_tests、body/has_event/record_tick 辅助函数
+- 改动内容：增加 53 项检查：独立全配对 oracle 对照 Broadphase、双向过滤、稳定排序/去重/非法代理、接触生命周期、触发器类型切换、销毁与 generation 复用、禁用/失活/移除组件、清空与重置、零求解迭代、稀疏场景候选数、固定 dt/tick/alpha/阶段顺序/卡帧预算，以及实际样例层过滤和多触发器 Tag 引用。
+- 修改原因：检查实际行为和生产调度接口，而非只验证单个函数是否执行。
+- 影响范围：随 sample_2d_action --physics-test 运行；本次样例总计 97 项检查。
+
+#### docs/Physics World 固定步长与碰撞事件完善.txt（新增）
+- 内容：保存逐文件变更、行为、风险、验证记录、额外修复与后续建议，以及仅属于本任务的完整代码 diff。
+- 影响：文档文件不参加构建；diff 不包含本文档自身，避免自包含。
+
+### 3. 行为变化
+
+- 生产执行顺序：pre_update/input/gameplay/movement 每显示帧一次；patrol → kinematic movement → Physics World 在每个 physics 固定步执行，之后立即执行 post_physics 事件消费；最后 animation → post_update（层级更新）→ render_prepare。
+- 默认 120 Hz，最大物理帧输入 0.25 秒、每帧最多 30 步；测试验证 30/60 FPS 得到一致结果，240 FPS 的不足一步余数可以保留。
+- 蓝方块为动态刚体；黄色冻结、紫色无重力、绿色运动学巡逻；静态地面承接物体；红平台为触发器，橙球进入时变青色并带 state.in_trigger，离开后恢复。
+- 新白色方块初始穿过青色平台，只与地面碰撞；按 L 开启平台层后重新掉落，将停在平台上。
+- P 禁用/启用蓝色方块物理；F/V 冻结切换、G 重力切换、T 实体/触发器切换、Space 发射、R 重置继续有效。相机和 2D 覆盖层原操作保持。
+- 事件有固定 tick、规范实体顺序和法线；实体销毁、失活、碰撞体移除和 mask 改变都有退出通知。
+
+### 4. 风险点
+
+- 当前仍是平移刚体 V0：盒体用世界 AABB，旋转盒不是精确 OBB；未实现 CCD、摩擦、角动量/旋转碰撞响应、休眠、关节。高速小物体仍可能穿过薄物体。
+- 窄相求解沿用本固定步积分后生成的候选集合；求解修正导致的新配对可能到下一固定步才进入候选。密集堆叠和强挤压场景需要后续更完整接触约束处理。
+- 超出帧时间和子步预算的时间会被丢弃，以控制卡帧后的工作量；这意味着极端卡帧期间仿真时间可能慢于现实时间。
+- interpolation_alpha 已正确传递，但尚未保存前后物理姿态用于渲染插值；低显示帧率的视觉平滑仍可继续改进。
+- Physics World 有持久缓存，应与同一个 ECS world 配对；切换世界时 reset。事件消费者需 clear_events 防止队列持续增长，读取实体组件前检查存活（样例 try_get_component 已包含检查）。
+- solver_iterations=0 为仅检测、不响应；world 的 stats 每个有效步更新，events 则是消费前累计。事件 normal 为 second 指向 first，退出 penetration 为 0。
+- GCC Debug 和当前 Windows D3D11 环境已验证；没有声称验证 Clang、Release 或其他平台。图形烟测验证了退出状态/日志和真实 GPU 管线，未自动逐键操作交互窗口。
+
+### 5. 建议验证方式
+
+在仓库根目录执行（Windows UNC 环境建议使用同一仓库的 Z: 映射路径；PATH 需包含 C:\msys64\ucrt64\bin）：
+1. cmake --preset gcc_debug
+2. cmake --build --preset build_gcc_debug -j 8
+3. ctest --preset test_gcc_debug --verbose
+4. .\build\gcc_debug\samples\sample_2d_action\sample_2d_action.exe --physics-test
+5. .\build\gcc_debug\samples\sample_2d_action\sample_2d_action.exe
+   观察下落/落地/弹跳/巡逻；用 L/P/F/V/G/T/Space/R 检查过滤、禁用、冻结、重力、触发模式和重置；WASD + QE + 方向键检查相机。
+6. 自动图形运行：.\build\gcc_debug\samples\sample_2d_action\sample_2d_action.exe --frames 360
+
+本次实际验证结果：
+- GCC Debug 全量受影响目标构建通过：rain_runtime、rain_app、sample_2d_action、sample_3d_pbr、rain_3d_tests、rain_msaa_tests。
+- rain_physics_v0_regressions：97 checks, 0 failures，其中新增 Physics World/Broadphase/events 文件贡献 53 项。
+- rain_3d_regressions：通过，包括 frustum、层级、glTF/PBR、HLSL/WARP、立方体朝外绕序和 24 个表面剔除像素用例。
+- rain_msaa_regressions：通过；8x MSAA 的部分覆盖边缘像素从 0 增至 352，sRGB resolve/depth/resize/fallback 验证通过。
+- CTest：3/3 通过。
+- 360 帧真实图形烟测：退出码 0；8x MSAA；718 个实际物理固定步；visible=9；cube y=0.650000，sphere y=0.650000；colliders=9，broadphase pairs=4，narrowphase tests=16，contacts=4；trigger enter/stay/exit=3/179/3。
+- 烟测固定步数由真实帧耗时决定，不要求与显示帧数一一对应。确定性 60 FPS 回归则严格验证 360 帧 = 720 步。
+- 日志：build/physics_world_task_20260930_ctest.log、build/physics_world_task_20260930_smoke.log、build/physics_world_task_20260930_smoke.err。
+- git diff --check 通过。
+
+### 6. 额外修复与后续建议（单独列出）
+
+本次已经额外修复：
+1. 应用与样例两套固定累积器：统一到 run_frame，防止重复物理更新。
+2. 卡帧边界：float 的 1/120 与 0.25 相除存在舍入差，修复本应 30 步却执行 29 步的问题。
+3. 实体复用与退出：缓存键包含 generation，销毁后的退出仍送达，避免旧状态附着到新实体。
+4. 多触发器引用所有权：不因一个触发器退出而移除其他触发器持有的 state.in_trigger。
+5. 静止接触容差：避免位置修正后接触刚好相切时 enter/exit 抖动。
+6. physics.disabled 层级行为：动态积分、候选筛选、运动学移动和巡逻保持一致。
+7. Broadphase 插入性能：通过哈希索引替换逐代理线性去重；排序索引而非代理，保证更新索引稳定。
+8. steady_clock：应用帧时钟使用单调时钟。
+9. 拼错且未编译的 physcis_world_3d.cpp 已用正确路径替换，旧 solver 迁移后只保留一个生产入口。
+
+建议下一批处理，未混入本次实现：
+1. 优先做 CCD / sweep 查询与摩擦，再扩展角速度、OBB 和约束求解；这些将改变求解器模型，应单独设计与测试。
+2. 增加上一物理姿态缓存并消费 interpolation_alpha，实现渲染插值。
+3. 大规模场景增加静态/动态 Broadphase 分离、增量更新和基准；当前 X 轴 sweep 在大量 X 投影重叠时仍可能二次扫描。
+4. 统一项目 C++ 标准配置：standard_project_settings.cmake 指定 C++20，而 rain_apply_common_options 要求 C++23；目前有效要求为 C++23。
+5. 修复独立的警告配置遗留问题：cmake/warnings.cmake 使用 CMAKE_CXX_COMPILE_ID（应为 CMAKE_CXX_COMPILER_ID），target_compile_options 的 target 与 PRIVATE 也缺少分隔；所以该函数的额外 -Wshadow/-Wconversion 目前未生效。全局通用函数中的 -Wall/-Wextra/-Wpedantic 本次构建有生效。建议警告策略修复与全库历史 warning 清理作为独立批次。
+
+### 7. 本次代码 diff 归档
+
+以下基于任务开始时的逐文件快照生成，包含新增与删除文件；不包含历史任务改动、构建产物或本文档本身。
+
+--- a/engine/runtime/include/rain/runtime/collision_filter_3d_component.hpp
++++ b/engine/runtime/include/rain/runtime/collision_filter_3d_component.hpp
+@@ -1,34 +1,26 @@
+ #pragma once
+ 
+-#include<rain/core/types.hpp>
++#include <rain/core/types.hpp>
+ 
+ namespace rain {
+-	namespace collision_layer_3d {
+-		constexpr u32 default_layer = 1u << 0;
++namespace collision_layer_3d {
++inline constexpr u32 default_layer = 1u << 0;
++inline constexpr u32 world = 1u << 1;
++inline constexpr u32 player = 1u << 2;
++inline constexpr u32 enemy = 1u << 3;
++inline constexpr u32 projectile = 1u << 4;
++inline constexpr u32 trigger = 1u << 5;
++inline constexpr u32 all = ~u32{0};
++}
+ 
+-		constexpr u32 world = 1u << 1;
++struct collision_filter_3d_component {
++    u32 layer = collision_layer_3d::default_layer;
++    u32 mask = collision_layer_3d::all;
++};
+ 
+-		constexpr u32 player = 1u << 2;
+-
+-		constexpr u32 enemy = 1u << 3;
+-		constexpr u32 projectile = 1u << 4;
+-		constexpr u32 trigger = 1u << 5;
+-		constexpr u32 all = 1u << 0xffffffffu;
+-	}
+-
+-	struct collision_filter_3d_component {
+-		u32 layer = collision_layer_3d::default_layer;
+-
+-		u32 mask = collision_layer_3d::all;
+-	};
+-
+-	[[nodiscard]] inline bool collision_filters_match(const collision_filter_3d_component&lhs, collision_filter_3d_component&rhs) {
+-		const bool lhs_accepts_rhs = (lhs.mask & rhs.mask) != 0;
+-
+-		const bool rhs_accepts_lhs = (rhs.mask & lhs.mask) != 0;
+-
+-		return lhs_accepts_rhs && rhs_accepts_lhs;
+-	}
+-
+-
+-}+[[nodiscard]] inline bool collision_filters_match(
++    const collision_filter_3d_component& first,
++    const collision_filter_3d_component& second) noexcept {
++    return (first.mask & second.layer) != 0 && (second.mask & first.layer) != 0;
++}
++}
+--- a/engine/runtime/include/rain/runtime/physics_broadphase_3d.hpp
++++ b/engine/runtime/include/rain/runtime/physics_broadphase_3d.hpp
+@@ -1,48 +1,43 @@
+ #pragma once
+ 
+-#include<rain/core/math/vec3.hpp>
+-#include<rain/core/types.hpp>
+-#include<rain/runtime/entity.hpp>
+-
+-#include<vector>
++#include <rain/core/math/vec3.hpp>
++#include <rain/core/container/rain_hash_map.hpp>
++#include <rain/core/types.hpp>
++#include <rain/runtime/collision_filter_3d_component.hpp>
++#include <rain/runtime/entity.hpp>
++#include <vector>
+ 
+ namespace rain {
+-	struct physics_aabb_3d {
+-		vec3 minimum{};
+-		vec3 maximum{};
+-	};
++struct physics_aabb_3d {
++    vec3 minimum{};
++    vec3 maximum{};
++};
++struct broadphase_proxy_3d {
++    entity_id entity;
++    physics_aabb_3d bounds;
++    u32 layer = collision_layer_3d::default_layer;
++    u32 mask = collision_layer_3d::all;
++    bool dynamic = false;
++    bool trigger = false;
++};
++struct broadphase_pair_3d {
++    entity_id first;
++    entity_id second;
++};
+ 
+-	struct broadphase_proxy_3d {
+-		entity_id entity;
+-
+-		physics_aabb_3d bounds;
+-
+-		u32 layer = 0;
+-		u32 mask = 0;
+-
+-		bool dynamic = false;
+-		bool trigger = false;
+-	};
+-
+-	struct broadphase_pair_3d {
+-		entity_id first;
+-		entity_id second;
+-	};
+-
+-	class physics_broadphase_3d {
+-	public:
+-		void clear();
+-
+-		void add(const broadphase_proxy_3d& proxy);
+-
+-		void build_pairs();
+-
+-		[[nodiscard]] const std::vector<broadphase_pair_3d>& pairs()const;
+-		[[nodiscard]] usize proxy_count()const;
+-		[[nodiscard]] usize pair_count()const;
+-
+-	private:
+-		std::vector<broadphase_proxy_3d>proxies_;
+-		std::vector<broadphase_pair_3d>pairs_;
+-	};
+-}+class physics_broadphase_3d {
++public:
++    void clear();
++    // Replaces a complete entity id; invalid bounds remove its previous proxy.
++    // Mutations invalidate pairs until build_pairs() is called again.
++    void add(const broadphase_proxy_3d& proxy);
++    void build_pairs();
++    [[nodiscard]] const std::vector<broadphase_pair_3d>& pairs() const;
++    [[nodiscard]] usize proxy_count() const;
++    [[nodiscard]] usize pair_count() const;
++private:
++    std::vector<broadphase_proxy_3d> proxies_;
++    rain_hash_map<u64,usize> proxy_indices_;
++    std::vector<broadphase_pair_3d> pairs_;
++};
++}
+--- a/engine/runtime/src/physics_broadphase_3d.cpp
++++ b/engine/runtime/src/physics_broadphase_3d.cpp
+@@ -1,69 +1,80 @@
+-#include<rain/runtime/physics_broadphase_3d.hpp>
+-#include<algorithm>
++#include <rain/runtime/physics_broadphase_3d.hpp>
++#include <algorithm>
++#include <cmath>
+ 
+ namespace rain {
+-	namespace {
+-		[[nodiscard]] bool overlaps_yz(const physics_aabb_3d& lhs, physics_aabb_3d& rhs) {
+-			if (lhs.maximum.y < rhs.minimum.y || rhs.maximum.y < lhs.minimum.y) {
+-				return false;
+-			}
+-
+-			if (lhs.maximum.z < rhs.minimum.z || rhs.maximum.z < lhs.minimum.z) {
+-				return false;
+-			}
+-
+-			return true;
+-		}
+-
+-		void physics_broadphase_3d::clear() {
+-			proxies_.clear();
+-			pairs_.clear();
+-		}
+-
+-
+-		void physics_broadphase_3d::add(const broadphase_proxy_3d&proxy) {
+-			proxies_.push_back(proxy);
+-			
+-		}
+-
+-		void physics_broadphase_3d::build_pairs() {
+-			pairs_.clear();
+-
+-			std::sort(proxies_.begin(), proxies_.end(), [](const broadphase_proxy_3d& lhs, const broadphase_proxy_3d& rhs) {return lhs.bounds.minimum.x < rhs.bounds.minimum.x; });
+-
+-			for (usize lhs_index = 0; lhs_index < proxies_.size(); ++lhs_index) {
+-				const broadphase_proxy_3d& lhs = proxies_[lhs_index];
+-
+-				for (usize rhs_index = lhs_index + 1; rhs_index < proxies_.size(); ++rhs_index) {
+-					const broadphase_proxy_3d& rhs = proxies_[rhs_index];
+-
+-					if (rhs.bounds.minimum.x > lhs.bounds.maximum.x) {
+-						break;
+-					}
+-
+-					if (!lhs.dynamic && !rhs.dynamic && !lhs.trigger && !rhs.trigger) {
+-						continue;
+-					}
+-
+-					if ((lhs.mask & rhs.layer) == 0 || (rhs.mask & lhs.layer) == 0)continue;
+-
+-					if (!overlaps_yz(lhs.bounds, rhs.bounds))continue;
+-
+-					pairs_.push_back(broadphase_pair_3d{.first = lhs.entity, .second = rhs.entity});
+-				}
+-			}
+-		}
+-
+-		const std::vector<broadphase_pair_3d>& physics_broadphase_3d::pairs()const {
+-			return pairs_;
+-		}
+-
+-		usize physics_broadphase_3dd::proxy_count()const {
+-			return proxies_.size();
+-		}
+-
+-		usize physcis_broadphase_3d::pair_count()const {
+-			return pairs_.size();
+-		}
+-	}
+-}+namespace {
++u64 entity_key(entity_id entity) { return (static_cast<u64>(entity.index)<<32) | entity.generation; }
++bool entity_less(entity_id a, entity_id b) {
++    return a.index < b.index || (a.index == b.index && a.generation < b.generation);
++}
++bool valid_bounds(const physics_aabb_3d& bounds) {
++    const auto& lo = bounds.minimum;
++    const auto& hi = bounds.maximum;
++    return std::isfinite(lo.x) && std::isfinite(lo.y) && std::isfinite(lo.z) &&
++        std::isfinite(hi.x) && std::isfinite(hi.y) && std::isfinite(hi.z) &&
++        lo.x <= hi.x && lo.y <= hi.y && lo.z <= hi.z;
++}
++bool overlaps(const physics_aabb_3d& a, const physics_aabb_3d& b) {
++    return a.minimum.x <= b.maximum.x && a.maximum.x >= b.minimum.x &&
++        a.minimum.y <= b.maximum.y && a.maximum.y >= b.minimum.y &&
++        a.minimum.z <= b.maximum.z && a.maximum.z >= b.minimum.z;
++}
++}
++void physics_broadphase_3d::clear() {
++    proxies_.clear();
++    proxy_indices_.clear();
++    pairs_.clear();
++}
++void physics_broadphase_3d::add(const broadphase_proxy_3d& proxy) {
++    pairs_.clear();
++    if (!proxy.entity.is_valid()) return;
++    const u64 key = entity_key(proxy.entity);
++    const auto* found = proxy_indices_.find(key);
++    if (!valid_bounds(proxy.bounds)) {
++        if (found) {
++            const usize index = *found;
++            if (index+1 != proxies_.size()) {
++                proxies_[index] = proxies_.back();
++                proxy_indices_.insert(entity_key(proxies_[index].entity),index);
++            }
++            proxies_.pop_back();
++            proxy_indices_.erase(key);
++        }
++        return;
++    }
++    if (found) proxies_[*found] = proxy;
++    else {
++        proxy_indices_.insert(key,proxies_.size());
++        proxies_.push_back(proxy);
++    }
++}
++void physics_broadphase_3d::build_pairs() {
++    pairs_.clear();
++    std::vector<usize> order(proxies_.size());
++    for (usize i=0;i<order.size();++i) order[i]=i;
++    std::sort(order.begin(),order.end(),[&](usize lhs,usize rhs) {
++        const auto& a=proxies_[lhs];const auto& b=proxies_[rhs];
++        if (a.bounds.minimum.x != b.bounds.minimum.x) return a.bounds.minimum.x < b.bounds.minimum.x;
++        return entity_less(a.entity,b.entity);
++    });
++    for (usize i = 0; i < proxies_.size(); ++i) {
++        const auto& a = proxies_[order[i]];
++        for (usize j = i + 1; j < proxies_.size(); ++j) {
++            const auto& b = proxies_[order[j]];
++            if (b.bounds.minimum.x > a.bounds.maximum.x) break;
++            if (!a.dynamic && !b.dynamic && !a.trigger && !b.trigger) continue;
++            if (!collision_filters_match({a.layer,a.mask},{b.layer,b.mask}) || !overlaps(a.bounds,b.bounds)) continue;
++            if (entity_less(b.entity,a.entity)) pairs_.push_back({b.entity,a.entity});
++            else pairs_.push_back({a.entity,b.entity});
++        }
++    }
++    std::sort(pairs_.begin(),pairs_.end(),[](const broadphase_pair_3d& a,const broadphase_pair_3d& b) {
++        if (a.first != b.first) return entity_less(a.first,b.first);
++        return entity_less(a.second,b.second);
++    });
++}
++const std::vector<broadphase_pair_3d>& physics_broadphase_3d::pairs() const { return pairs_; }
++usize physics_broadphase_3d::proxy_count() const { return proxies_.size(); }
++usize physics_broadphase_3d::pair_count() const { return pairs_.size(); }
++}
+--- a/engine/runtime/include/rain/runtime/physics_world_3d.hpp
++++ b/engine/runtime/include/rain/runtime/physics_world_3d.hpp
+@@ -1,109 +1,79 @@
+ #pragma once
+ 
+-#include<rain/core/container/rain_hash_map.hpp>
+-#include<rain/runtime/entity.hpp>
+-#include<rain/runtime/physics_3d.hpp>
+-#include<rain/runtime/physics_broadphase_3d.hpp>
+-
+-#include<vector>
++#include <rain/core/container/rain_hash_map.hpp>
++#include <rain/runtime/entity.hpp>
++#include <rain/runtime/physics_3d.hpp>
++#include <rain/runtime/physics_broadphase_3d.hpp>
++#include <functional>
++#include <vector>
+ 
+ namespace rain {
+-	class world;
++class world;
++enum class collision_event_type_3d : u8 { enter, stay, exit };
++struct collision_event_3d {
++    collision_event_type_3d type = collision_event_type_3d::enter;
++    // Canonical order includes entity generations. Exit may contain dead ids.
++    entity_id first;
++    entity_id second;
++    // World-space normal points from second to first.
++    vec3 normal{};
++    f32 penetration = 0.0f;
++    bool trigger = false;
++    u64 fixed_tick_index = 0;
++};
++struct collision_pair_key_3d {
++    entity_id first;
++    entity_id second;
++    friend bool operator==(const collision_pair_key_3d& a,const collision_pair_key_3d& b) {
++        return a.first == b.first && a.second == b.second;
++    }
++};
++struct collision_pair_hash_3d {
++    usize operator()(const collision_pair_key_3d& key) const noexcept {
++        const u64 first = (static_cast<u64>(key.first.index) << 32) | key.first.generation;
++        const u64 second = (static_cast<u64>(key.second.index) << 32) | key.second.generation;
++        const usize a = std::hash<u64>{}(first), b = std::hash<u64>{}(second);
++        return a ^ (b + usize{0x9e3779b9u} + (a << 6) + (a >> 2));
++    }
++};
++struct active_collision_3d {
++    bool trigger = false;
++    vec3 normal{};
++    f32 penetration = 0.0f;
++};
++struct physics_world_3d_stats {
++    u32 collider_count = 0;
++    u32 broadphase_pair_count = 0;
++    // Actual narrowphase calls across all solver iterations.
++    u32 narrowphase_test_count = 0;
++    // Unique contacts detected during this step, including triggers.
++    u32 collision_count = 0;
++};
+ 
+-	enum class collision_event_type_3d :u8 {
+-		enter,
+-		stay,
+-		exit,
+-	};
+-
+-	struct collision_event_3d {
+-		collision_event_type_3d type = collision_event_type_3d::enter;
+-
+-		entity_id first;
+-		entity_id second;
+-
+-		vec3 normal{};
+-		f32 penetration = 0.0f;
+-		bool trigger = false;
+-
+-	};
+-
+-	struct collision_pair_key_3d {
+-		entity_id first;
+-		entity_id second;
+-
+-		friend bool operator == (const collision_pair_key_3d& lhs, const collision_pair_key_3d& rhs) {
+-			return lhs.first == rhs.first && lhs.second == rhs.second;
+-		}
+-	};
+-
+-	struct active_collision + 3d{
+-		bool trigger = false;
+-		vec3 normal{};
+-		f32 penetration = 0.0f;
+-		u64 last_seen_tick = 0;
+-	};
+-
+-	struct physics_world_3d_stats {
+-		u32 collision_count = 0;
+-
+-		u32 broadphase_pair_count = 0;
+-
+-		u32 narrowphase_test_count = 0;
+-
+-		u32 collision_count = 0;
+-	};
+-
+-	class physics_world_3d {
+-	public:
+-		explicit physics_world_3d(physics_settings_3d settings = {});
+-
+-		void step(world& target_world, f32 fixed_delta_seconds, u64 fixed_tick_index);
+-
+-		[[nodiscard]] const std::vector<collision_event_3d>& events()const;
+-
+-		void clear_events();
+-
+-		[[nodiscard]] const physics_world_stats& stats()const;
+-
+-		[[nodiscard]] physics_settings_3d& settings();
+-
+-	private:
+-		void integrate(world& target_world, f32 fixed_delta_seconds);
+-
+-		void build_broadphase(world& target_world);
+-
+-		void solve_collisions(world& target_world, u64 fixed_tick_index);
+-
+-		void finalize_collision_event(world& target_world, u64 fixed_tick_index);
+-
+-	private:
+-		physics_settings_3d settings_;
+-		physics_broadphase_3d broadphase_;
+-		rain_hash_map<collision_pair_key_3d, active_collision_3d>active_collisions_;
+-
+-		std::vector<collision_event_3d>events_;
+-
+-		physics_world_3d_stats stats_;
+-	};
+-
+-
+-
++// One instance per ECS world. Call reset() before reusing with another world.
++class physics_world_3d {
++public:
++    explicit physics_world_3d(physics_settings_3d settings = {});
++    void step(world& target_world,f32 fixed_delta_seconds,u64 fixed_tick_index);
++    // Events accumulate across substeps until explicitly consumed.
++    [[nodiscard]] const std::vector<collision_event_3d>& events() const;
++    void clear_events();
++    void reset();
++    [[nodiscard]] const physics_world_3d_stats& stats() const;
++    [[nodiscard]] physics_settings_3d& settings();
++    [[nodiscard]] const physics_settings_3d& settings() const;
++private:
++    void integrate(world& target_world,f32 delta_seconds);
++    void build_broadphase(world& target_world);
++    void solve_collisions(world& target_world);
++    void finalize_collision_events(u64 fixed_tick_index);
++    physics_settings_3d settings_;
++    physics_broadphase_3d broadphase_;
++    rain_hash_map<collision_pair_key_3d,active_collision_3d,collision_pair_hash_3d> active_collisions_;
++    rain_hash_map<collision_pair_key_3d,active_collision_3d,collision_pair_hash_3d> current_collisions_;
++    std::vector<collision_pair_key_3d> active_pairs_;
++    std::vector<collision_pair_key_3d> current_pairs_;
++    std::vector<collision_event_3d> events_;
++    physics_world_3d_stats stats_;
++};
+ }
+-
+-namespace std {
+-	template<>
+-	struct hash<rain::collision_pair_key_3d> {
+-		std::size_t operator()(const rain::collision_pair_key_3d& key)const noexcept {
+-			std::size_t result = static_cast<std::size_t>(key.first.index);
+-
+-			result ^= static_cast<std::size_t>(key.first.generation) << 16;
+-
+-			result ^= static_cast<std::size_t>(key.second.index) << 32;
+-
+-			result ^= static_cast<std::size_t>(key.second.generation) << 48;
+-
+-			return result;
+-		}
+-	};
+-}--- a/engine/runtime/src/physcis_world_3d.cpp
++++ /dev/null
+@@ -1,124 +0,0 @@
+-#include<physics_world_3d.hpp>
+-
+-
+-namespace rain {
+-	[[nodiscard]] collision_pair_key_3d make_pair_key(entity_id first, entity_id second) {
+-		const bool first_before_second = first.index < second.index || (first.index == second.index && first.generation < second.generation);
+-
+-		if (first_before_second) {
+-			return{ .first = first,.second = second };
+-		}
+-
+-		return{ .first = second,.second = first };
+-	}
+-
+-	void physics_world_3d::build_broadphase(world& target_world) {
+-		broadphase_.clear();
+-
+-		entity_query_desc query{
+-			.reqiured_components = { get_type_id<transform_3d_component>(),get_type_id<collider_3d_component>(),get_type_id<collision_filter_3d_component>() },
+-			.required_tags = [] {
+-			tag_query result;
+-			result.require_all(tag_id{ "physcis.collider" });
+-			result.reject(tag_id{ "physics.disabled" });
+-			return result;
+-			}
+-			.require_alive = true,
+-			.require_active = true
+-		};
+-
+-		const entity_query_result entities = target_world.query_entities(query);
+-
+-		stats_.collider_count = static_cast<u32>(entities.size());
+-
+-		for (entity_id entity : entities) {
+-			const transform_3d_component& transform = target_world.get_component<transform_3d_component>(entity);
+-
+-			const collider_3d_component& collider = target_world.get_component<collision_3d_component>(entity);
+-
+-			const collision_filter_3d_component& filter = target_world.get_component<collision_filter_3d_component>(entity);
+-
+-			broadphase_.add(broadphase_proxy_3d{
+-				.entity = entity,
+-				.bounds = make_broadphase_aabb(transform,collider),
+-				.layer = filter.layer,
+-				.mask = filter.mask,
+-
+-				.dynamic = target_world.has_tag(entity,tag_id{"physics.dynamic"}),
+-
+-				.trigger = target_world.has_tag(entity,tag_id{"physics.trigger"}),
+-				
+-				});
+-		}
+-
+-		broadphase_.build_pairs();
+-		stats_.broadphase_pair_count = static_cast<u32>(broadphase_.pair_count());
+-	}
+-
+-	void physics_world_3d::step(world& target_world, f32 fixed_delta_seconds, u64 fixed_tick_index) {
+-		events_.clear();
+-		stats_ = {  };
+-
+-		intergrate(target_world, fixed_delta_seconds);
+-
+-		build_broadphase(target_world);
+-
+-		solve_collisions(target_world, fixed_tick_index);
+-
+-		finalize_collision_events(target_world,fixed_tick_index);
+-
+-	}
+-
+-
+-	void physics_world_3d::finalize_collision_events(world& target_world, u64 fixed_tick_index) {
+-		std::vector<collision_pair_key_3d>ended_pairs;
+-
+-		active_collisions_.for_each([&](const collision_pair_key_3d& key, const active_collision_3d& collision)) {
+-			if (collision.last_seen_tick == fixed_tick_index)return;
+-
+-			ended_pairs.push_back(key);
+-
+-			if (target_world.is_alive(key.first) && target_world.is_alive(key.second)) {
+-				events_.push_back(collision_event_3d{.type=collision_event_type_3d::exit,.first=key.first,.second=key.second,.normal=collision.normal,.penetration=0.0f,.trigger=collision.trigger});
+-			}
+-		}
+-
+-		for (const collision_pair_key_3d& key : ended_pairs) {
+-			active_collisions_.erase(key);
+-		}
+-	}
+-	void physics_world_3d::solve_collisions(world& target_world, u64 fixed_tick_index) {
+-
+-		//  narrowphase targeted
+-		const collision_pair_key_3d key = make_pair_key(pair.first, pair.second);
+-
+-		active_collision_3d* previous = active_collisions_.find(key);
+-
+-		const bool trigger = target_world.has_tag(pair.first, tag_id{ "physics,trigger" }) || target_world.has_tag(pair.second, tag_id{ "physics,trigger" });
+-
+-
+-
+-		if (previous == nullptr) {
+-			active_collision_[key] = active_collision_3d{ .trigger = trigger,.normal = contact.normal,.penetration = contact.penenration,.last_seen_tick = fixed_tick_index };
+-
+-			events_.push_back(collision_event_3d{ .type = collision_event_type_3d::enter,.first = key.first,.second = key.second,.normal = contact.normal,.penentration = contact.penetration,.trigger = trigger });
+-
+-		}
+-		else {
+-			previous->trigger = trigger;
+-			previous->normal = contact.normal;
+-			previous->penentration = contact.penetration;
+-
+-			previous->last_seen_tick = fixed_tick_index;
+-
+-			events_.push_back(collision_event_3d{ .type = collision_event_type_3d::stay,.first = key.first,.second = key.second,.normal = contact.normal,.penetration = contact.penetration,.trigger = trigger });
+-		}
+-
+-		if (!trigger) {
+-			reslove_collision(target_world, pair.first, pair.second, contact)
+-		}
+-
+-		//narrowphase targeted
+-
+-	}
+-}--- /dev/null
++++ b/engine/runtime/src/physics_world_3d.cpp
+@@ -0,0 +1,442 @@
++#include <rain/runtime/physics_world_3d.hpp>
++
++#include <rain/runtime/collider_3d_component.hpp>
++#include <rain/runtime/local_matrix_3d_component.hpp>
++#include <rain/runtime/physics_3d.hpp>
++#include <rain/runtime/rigid_body_3d_component.hpp>
++#include <rain/runtime/transform_3d_component.hpp>
++#include <rain/runtime/velocity_3d_component.hpp>
++#include <rain/runtime/world.hpp>
++
++#include <algorithm>
++#include <cmath>
++
++namespace rain
++{
++    namespace
++    {
++        constexpr f32 contact_epsilon = 0.000001f;
++        constexpr f32 contact_tolerance = 0.00001f;
++
++        [[nodiscard]] bool has_physics_tag(const world& target_world, entity_id entity, const char* name)
++        {
++            return target_world.has_tag_in_hierarchy(entity, tag_id{name});
++        }
++
++        // Match transform_hierarchy_system_3d's explicit inherit-parent opt-in,
++        // and compute from current local transforms, not last frame's cache.
++        [[nodiscard]] mat4 current_world_matrix(const world& target_world, entity_id entity)
++        {
++            mat4 result = mat4::identity();
++            usize visited = 0;
++            while (target_world.is_alive(entity) && visited++ < target_world.entity_capacity())
++            {
++                const auto* transform = target_world.try_get_component<transform_3d_component>(entity);
++                if (transform == nullptr) break;
++                const auto* matrix_override = target_world.try_get_component<local_matrix_3d_component>(entity);
++                result = result * (matrix_override != nullptr ? matrix_override->matrix : transform->matrix());
++
++                if (!target_world.has_tag(entity, tag_id{"transform.inherit_parent"})) break;
++                const entity_id parent = target_world.parent_of(entity);
++                if (!target_world.is_entity_active(parent)) break;
++                entity = parent;
++            }
++            return result;
++        }
++
++        [[nodiscard]] mat4 parent_world_matrix(const world& target_world, entity_id entity)
++        {
++            const entity_id parent = target_world.parent_of(entity);
++            if (target_world.has_tag(entity, tag_id{"transform.inherit_parent"}) &&
++                target_world.is_entity_active(parent))
++            {
++                return current_world_matrix(target_world, parent);
++            }
++            return mat4::identity();
++        }
++
++        [[nodiscard]] vec3 basis(const mat4& matrix, u32 row)
++        {
++            return {matrix.values[row][0], matrix.values[row][1], matrix.values[row][2]};
++        }
++
++        [[nodiscard]] f32 basis_determinant(const mat4& matrix)
++        {
++            return dot(basis(matrix, 0), cross(basis(matrix, 1), basis(matrix, 2)));
++        }
++
++        void translate_world(world& target_world, entity_id entity, vec3 displacement)
++        {
++            const mat4 parent = parent_world_matrix(target_world, entity);
++            const vec3 axis_x = basis(parent, 0);
++            const vec3 axis_y = basis(parent, 1);
++            const vec3 axis_z = basis(parent, 2);
++            const f32 determinant = dot(axis_x, cross(axis_y, axis_z));
++            if (!std::isfinite(determinant) || std::abs(determinant) <= contact_epsilon) return;
++
++            auto& transform = target_world.get_component<transform_3d_component>(entity);
++            transform.position += vec3{
++                dot(displacement, cross(axis_y, axis_z)) / determinant,
++                dot(displacement, cross(axis_z, axis_x)) / determinant,
++                dot(displacement, cross(axis_x, axis_y)) / determinant
++            };
++        }
++
++        [[nodiscard]] f32 dynamic_inverse_mass(const world& target_world, entity_id entity)
++        {
++            if (!has_physics_tag(target_world, entity, "physics.dynamic") ||
++                has_physics_tag(target_world, entity, "physics.static") ||
++                has_physics_tag(target_world, entity, "physics.kinematic") ||
++                has_physics_tag(target_world, entity, "state.frozen") ||
++                has_physics_tag(target_world, entity, "physics.disabled") ||
++                target_world.has_component<local_matrix_3d_component>(entity) ||
++                !target_world.has_component<velocity_3d_component>(entity))
++            {
++                return 0.0f;
++            }
++
++            const auto* body = target_world.try_get_component<rigid_body_3d_component>(entity);
++            if (body == nullptr || !std::isfinite(body->inverse_mass) || body->inverse_mass <= 0.0f)
++            {
++                return 0.0f;
++            }
++            const f32 determinant = basis_determinant(parent_world_matrix(target_world, entity));
++            return std::isfinite(determinant) && std::abs(determinant) > contact_epsilon ?
++                body->inverse_mass : 0.0f;
++        }
++
++        struct world_aabb_3d
++        {
++            vec3 center{};
++            vec3 half_extents{};
++        };
++
++        [[nodiscard]] world_aabb_3d make_world_aabb(const mat4& matrix, const collider_3d_component& collider)
++        {
++            const vec3 half{
++                std::abs(collider.half_extents.x),
++                std::abs(collider.half_extents.y),
++                std::abs(collider.half_extents.z)
++            };
++            return {
++                .center = transform_point(collider.center, matrix),
++                .half_extents = {
++                    std::abs(matrix.values[0][0]) * half.x + std::abs(matrix.values[1][0]) * half.y + std::abs(matrix.values[2][0]) * half.z,
++                    std::abs(matrix.values[0][1]) * half.x + std::abs(matrix.values[1][1]) * half.y + std::abs(matrix.values[2][1]) * half.z,
++                    std::abs(matrix.values[0][2]) * half.x + std::abs(matrix.values[1][2]) * half.y + std::abs(matrix.values[2][2]) * half.z
++                }
++            };
++        }
++
++        struct world_sphere_3d
++        {
++            vec3 center{};
++            f32 radius = 0.0f;
++        };
++
++        [[nodiscard]] world_sphere_3d make_world_sphere(const mat4& matrix, const collider_3d_component& collider)
++        {
++            // Bound the largest eigenvalue of A*A^T. Unlike max_basis_scale,
++            // this stays conservative when parent nonuniform scale adds shear.
++            const vec3 x = basis(matrix, 0);
++            const vec3 y = basis(matrix, 1);
++            const vec3 z = basis(matrix, 2);
++            const f32 bound_squared = std::max({
++                dot(x, x) + std::abs(dot(x, y)) + std::abs(dot(x, z)),
++                dot(y, y) + std::abs(dot(y, x)) + std::abs(dot(y, z)),
++                dot(z, z) + std::abs(dot(z, x)) + std::abs(dot(z, y))
++            });
++            return {
++                .center = transform_point(collider.center, matrix),
++                .radius = std::abs(collider.radius) * std::sqrt(std::max(bound_squared, 0.0f))
++            };
++        }
++
++        struct collision_contact_3d
++        {
++            bool colliding = false;
++            // Always points from rhs toward lhs.
++            vec3 normal{};
++            f32 penetration = 0.0f;
++        };
++
++        [[nodiscard]] collision_contact_3d intersect_aabb(const world_aabb_3d& lhs, const world_aabb_3d& rhs)
++        {
++            const vec3 difference = lhs.center - rhs.center;
++            const vec3 penetration{
++                lhs.half_extents.x + rhs.half_extents.x - std::abs(difference.x),
++                lhs.half_extents.y + rhs.half_extents.y - std::abs(difference.y),
++                lhs.half_extents.z + rhs.half_extents.z - std::abs(difference.z)
++            };
++            if (penetration.x < -contact_tolerance || penetration.y < -contact_tolerance || penetration.z < -contact_tolerance) return {};
++
++            if (penetration.x <= penetration.y && penetration.x <= penetration.z)
++            {
++                return {true, {difference.x < 0.0f ? -1.0f : 1.0f, 0.0f, 0.0f}, std::max(penetration.x,0.0f)};
++            }
++            if (penetration.y <= penetration.z)
++            {
++                return {true, {0.0f, difference.y < 0.0f ? -1.0f : 1.0f, 0.0f}, std::max(penetration.y,0.0f)};
++            }
++            return {true, {0.0f, 0.0f, difference.z < 0.0f ? -1.0f : 1.0f}, std::max(penetration.z,0.0f)};
++        }
++
++        [[nodiscard]] collision_contact_3d intersect_sphere(const world_sphere_3d& lhs, const world_sphere_3d& rhs)
++        {
++            const vec3 difference = lhs.center - rhs.center;
++            const f32 distance_squared = length_squared(difference);
++            const f32 radius_sum = lhs.radius + rhs.radius;
++            if (distance_squared > (radius_sum + contact_tolerance) * (radius_sum + contact_tolerance)) return {};
++            const f32 distance = std::sqrt(distance_squared);
++            return {
++                .colliding = true,
++                .normal = distance > contact_epsilon ? difference / distance : vec3{0.0f, 1.0f, 0.0f},
++                .penetration = std::max(radius_sum - distance,0.0f)
++            };
++        }
++
++        [[nodiscard]] collision_contact_3d intersect_sphere_box(const world_sphere_3d& sphere, const world_aabb_3d& box)
++        {
++            const vec3 offset = sphere.center - box.center;
++            const vec3 closest{
++                std::clamp(offset.x, -box.half_extents.x, box.half_extents.x),
++                std::clamp(offset.y, -box.half_extents.y, box.half_extents.y),
++                std::clamp(offset.z, -box.half_extents.z, box.half_extents.z)
++            };
++            const vec3 difference = offset - closest;
++            const f32 distance_squared = length_squared(difference);
++            if (distance_squared > (sphere.radius + contact_tolerance) * (sphere.radius + contact_tolerance)) return {};
++
++            if (distance_squared > contact_epsilon * contact_epsilon)
++            {
++                const f32 distance = std::sqrt(distance_squared);
++                return {true, difference / distance, std::max(sphere.radius - distance,0.0f)};
++            }
++
++            // A center inside the box must exit through its nearest face.
++            const vec3 face_distance{
++                box.half_extents.x - std::abs(offset.x),
++                box.half_extents.y - std::abs(offset.y),
++                box.half_extents.z - std::abs(offset.z)
++            };
++            if (face_distance.x <= face_distance.y && face_distance.x <= face_distance.z)
++            {
++                return {true, {offset.x < 0.0f ? -1.0f : 1.0f, 0.0f, 0.0f}, sphere.radius + face_distance.x};
++            }
++            if (face_distance.y <= face_distance.z)
++            {
++                return {true, {0.0f, offset.y < 0.0f ? -1.0f : 1.0f, 0.0f}, sphere.radius + face_distance.y};
++            }
++            return {true, {0.0f, 0.0f, offset.z < 0.0f ? -1.0f : 1.0f}, sphere.radius + face_distance.z};
++        }
++
++        [[nodiscard]] collision_contact_3d intersect_colliders(
++            const mat4& lhs_matrix, const collider_3d_component& lhs,
++            const mat4& rhs_matrix, const collider_3d_component& rhs)
++        {
++            if (lhs.shape == collider_shape_3d::box && rhs.shape == collider_shape_3d::box)
++            {
++                return intersect_aabb(make_world_aabb(lhs_matrix, lhs), make_world_aabb(rhs_matrix, rhs));
++            }
++            if (lhs.shape == collider_shape_3d::sphere && rhs.shape == collider_shape_3d::sphere)
++            {
++                return intersect_sphere(make_world_sphere(lhs_matrix, lhs), make_world_sphere(rhs_matrix, rhs));
++            }
++            if (lhs.shape == collider_shape_3d::sphere && rhs.shape == collider_shape_3d::box)
++            {
++                return intersect_sphere_box(make_world_sphere(lhs_matrix, lhs), make_world_aabb(rhs_matrix, rhs));
++            }
++            if (lhs.shape == collider_shape_3d::box && rhs.shape == collider_shape_3d::sphere)
++            {
++                auto result = intersect_sphere_box(make_world_sphere(rhs_matrix, rhs), make_world_aabb(lhs_matrix, lhs));
++                result.normal = -result.normal;
++                return result;
++            }
++            return {};
++        }
++
++        [[nodiscard]] vec3 contact_velocity(const world& target_world, entity_id entity, f32 inverse_mass)
++        {
++            if (has_physics_tag(target_world, entity, "state.frozen") ||
++                has_physics_tag(target_world, entity, "physics.disabled") ||
++                has_physics_tag(target_world, entity, "physics.static"))
++            {
++                return {};
++            }
++            const auto* velocity = target_world.try_get_component<velocity_3d_component>(entity);
++            if (velocity == nullptr) return {};
++            if (inverse_mass > 0.0f) return velocity->linear;
++            if (has_physics_tag(target_world, entity, "physics.kinematic") &&
++                !target_world.has_component<local_matrix_3d_component>(entity))
++            {
++                const mat4 parent = parent_world_matrix(target_world, entity);
++                return basis(parent, 0) * velocity->linear.x +
++                    basis(parent, 1) * velocity->linear.y + basis(parent, 2) * velocity->linear.z;
++            }
++            return {};
++        }
++
++        [[nodiscard]] f32 restitution_of(const world& target_world, entity_id entity)
++        {
++            const auto* body = target_world.try_get_component<rigid_body_3d_component>(entity);
++            return body != nullptr && std::isfinite(body->restitution) ?
++                std::clamp(body->restitution, 0.0f, 1.0f) : 0.0f;
++        }
++
++        void resolve_collision(world& target_world, entity_id lhs, entity_id rhs,
++            const collision_contact_3d& contact, f32 lhs_mass, f32 rhs_mass, const physics_settings_3d& settings)
++        {
++            const f32 inverse_mass_sum = lhs_mass + rhs_mass;
++            if (inverse_mass_sum <= 0.0f) return;
++
++            const vec3 correction = contact.normal * (contact.penetration / inverse_mass_sum);
++            if (lhs_mass > 0.0f) translate_world(target_world, lhs, correction * lhs_mass);
++            if (rhs_mass > 0.0f) translate_world(target_world, rhs, correction * -rhs_mass);
++
++            const vec3 relative_velocity =
++                contact_velocity(target_world, lhs, lhs_mass) - contact_velocity(target_world, rhs, rhs_mass);
++            const f32 normal_speed = dot(relative_velocity, contact.normal);
++            if (normal_speed >= 0.0f) return;
++
++            const f32 restitution = -normal_speed > std::max(settings.restitution_velocity_threshold, 0.0f) ?
++                std::max(restitution_of(target_world, lhs), restitution_of(target_world, rhs)) : 0.0f;
++            const vec3 impulse = contact.normal * (-(1.0f + restitution) * normal_speed / inverse_mass_sum);
++            if (lhs_mass > 0.0f)
++            {
++                target_world.get_component<velocity_3d_component>(lhs).linear += impulse * lhs_mass;
++            }
++            if (rhs_mass > 0.0f)
++            {
++                target_world.get_component<velocity_3d_component>(rhs).linear -= impulse * rhs_mass;
++            }
++        }
++    }
++
++    physics_world_3d::physics_world_3d(physics_settings_3d settings) : settings_(settings) {}
++
++    void physics_world_3d::integrate(world& target_world,f32 delta_seconds) {
++        entity_query_desc query;
++        query.required_components = {get_type_id<transform_3d_component>(),get_type_id<velocity_3d_component>(),
++            get_type_id<rigid_body_3d_component>()};
++        for (entity_id entity : target_world.query_entities(query)) {
++            if (dynamic_inverse_mass(target_world,entity) <= 0.0f) continue;
++            auto& velocity = target_world.get_component<velocity_3d_component>(entity);
++            const auto& body = target_world.get_component<rigid_body_3d_component>(entity);
++            if (!has_physics_tag(target_world,entity,"physics.no_gravity"))
++                velocity.linear += settings_.gravity * (body.gravity_scale * delta_seconds);
++            velocity.linear *= std::exp(-std::max(body.linear_damping,0.0f) * delta_seconds);
++            translate_world(target_world,entity,velocity.linear * delta_seconds);
++        }
++    }
++
++    void physics_world_3d::build_broadphase(world& target_world) {
++        broadphase_.clear();
++        entity_query_desc query;
++        query.required_components = {get_type_id<transform_3d_component>(),get_type_id<collider_3d_component>()};
++        for (entity_id entity : target_world.query_entities(query)) {
++            if (has_physics_tag(target_world,entity,"physics.disabled")) continue;
++            const auto& collider = target_world.get_component<collider_3d_component>(entity);
++            const mat4 matrix = current_world_matrix(target_world,entity);
++            vec3 center,extent;
++            if (collider.shape == collider_shape_3d::box) {
++                const auto box = make_world_aabb(matrix,collider);
++                center = box.center;extent = box.half_extents;
++            } else if (collider.shape == collider_shape_3d::sphere) {
++                const auto sphere = make_world_sphere(matrix,collider);
++                center = sphere.center;extent = {sphere.radius,sphere.radius,sphere.radius};
++            } else continue;
++            // Keep narrowphase's touching tolerance inside conservative broadphase bounds.
++            extent += vec3{contact_tolerance,contact_tolerance,contact_tolerance};
++            const auto* filter = target_world.try_get_component<collision_filter_3d_component>(entity);
++            const collision_filter_3d_component defaults;
++            if (!filter) filter = &defaults;
++            broadphase_.add({.entity=entity,.bounds={center-extent,center+extent},
++                .layer=filter->layer,.mask=filter->mask,
++                .dynamic=dynamic_inverse_mass(target_world,entity)>0.0f ||
++                    (has_physics_tag(target_world,entity,"physics.kinematic") &&
++                     !has_physics_tag(target_world,entity,"physics.static") &&
++                     !has_physics_tag(target_world,entity,"state.frozen")),
++                .trigger=has_physics_tag(target_world,entity,"physics.trigger")});
++        }
++        broadphase_.build_pairs();
++        stats_.collider_count = static_cast<u32>(broadphase_.proxy_count());
++        stats_.broadphase_pair_count = static_cast<u32>(broadphase_.pair_count());
++    }
++
++    void physics_world_3d::solve_collisions(world& target_world) {
++        // Zero iterations disables response, but still detects contacts and triggers.
++        const u32 passes = std::max(settings_.solver_iterations,1u);
++        for (u32 iteration=0;iteration<passes;++iteration) {
++            for (const auto& pair : broadphase_.pairs()) {
++                const auto& lhs = target_world.get_component<collider_3d_component>(pair.first);
++                const auto& rhs = target_world.get_component<collider_3d_component>(pair.second);
++                ++stats_.narrowphase_test_count;
++                const auto contact = intersect_colliders(current_world_matrix(target_world,pair.first),lhs,
++                    current_world_matrix(target_world,pair.second),rhs);
++                if (!contact.colliding) continue;
++                const bool trigger = has_physics_tag(target_world,pair.first,"physics.trigger") ||
++                    has_physics_tag(target_world,pair.second,"physics.trigger");
++                const collision_pair_key_3d key{pair.first,pair.second};
++                if (!current_collisions_.contains(key)) {
++                    current_collisions_.insert(key,{trigger,contact.normal,contact.penetration});
++                    current_pairs_.push_back(key);
++                }
++                if (!trigger && iteration<settings_.solver_iterations)
++                    resolve_collision(target_world,pair.first,pair.second,contact,
++                        dynamic_inverse_mass(target_world,pair.first),dynamic_inverse_mass(target_world,pair.second),settings_);
++            }
++        }
++        stats_.collision_count = static_cast<u32>(current_collisions_.size());
++    }
++
++    void physics_world_3d::finalize_collision_events(u64 fixed_tick_index) {
++        const usize first_new_event = events_.size();
++        for (const auto& key : active_pairs_) {
++            const auto& previous = *active_collisions_.find(key);
++            const auto* current = current_collisions_.find(key);
++            if (!current || current->trigger != previous.trigger)
++                events_.push_back({collision_event_type_3d::exit,key.first,key.second,previous.normal,0,
++                    previous.trigger,fixed_tick_index});
++        }
++        for (const auto& key : current_pairs_) {
++            const auto& current = *current_collisions_.find(key);
++            const auto* previous = active_collisions_.find(key);
++            const auto type = previous && previous->trigger==current.trigger ?
++                collision_event_type_3d::stay : collision_event_type_3d::enter;
++            events_.push_back({type,key.first,key.second,current.normal,current.penetration,current.trigger,fixed_tick_index});
++        }
++        const auto entity_less=[](entity_id a,entity_id b) {
++            return a.index<b.index || (a.index==b.index && a.generation<b.generation);
++        };
++        // Deterministic delivery; a contact-type change exits before entering its new type.
++        std::sort(events_.begin()+static_cast<std::ptrdiff_t>(first_new_event),events_.end(),
++            [&](const collision_event_3d& a,const collision_event_3d& b) {
++                if (a.first!=b.first) return entity_less(a.first,b.first);
++                if (a.second!=b.second) return entity_less(a.second,b.second);
++                const auto rank=[](collision_event_type_3d type) { return type==collision_event_type_3d::exit ? 0 : 1; };
++                return rank(a.type)<rank(b.type);
++            });
++        std::swap(active_collisions_,current_collisions_);
++        active_pairs_.swap(current_pairs_);
++    }
++
++    void physics_world_3d::step(world& target_world,f32 fixed_delta_seconds,u64 fixed_tick_index) {
++        if (!std::isfinite(fixed_delta_seconds) || fixed_delta_seconds<=0.0f) return;
++        stats_ = {};
++        current_collisions_.clear();
++        current_pairs_.clear();
++        integrate(target_world,fixed_delta_seconds);
++        build_broadphase(target_world);
++        solve_collisions(target_world);
++        finalize_collision_events(fixed_tick_index);
++    }
++    const std::vector<collision_event_3d>& physics_world_3d::events() const { return events_; }
++    void physics_world_3d::clear_events() { events_.clear(); }
++    void physics_world_3d::reset() {
++        broadphase_.clear();active_collisions_.clear();current_collisions_.clear();
++        active_pairs_.clear();current_pairs_.clear();events_.clear();stats_={};
++    }
++    const physics_world_3d_stats& physics_world_3d::stats() const { return stats_; }
++    physics_settings_3d& physics_world_3d::settings() { return settings_; }
++    const physics_settings_3d& physics_world_3d::settings() const { return settings_; }
++}
+--- a/engine/runtime/include/rain/runtime/physics_system_3d.hpp
++++ b/engine/runtime/include/rain/runtime/physics_system_3d.hpp
+@@ -1,14 +1,8 @@
+ #pragma once
+-
+ #include <rain/runtime/system_scheduler.hpp>
+ 
+-namespace rain
+-{
+-    // Run integration followed by collision at a fixed timestep. Both systems
+-    // accept physics_settings_3d through user_data (nullptr uses defaults).
+-    // Queries should select components; physics tags are checked in hierarchy.
+-    //void physics_integrate_system_3d(system_context& context, void* user_data);
+-    //void physics_collision_system_3d(system_context& context, void* user_data);
+-    // this two rebuild as physics_world_system_3d
+-    void physics_world_system_3d(system_context& context, void* user_data);
+-}+namespace rain {
++// Register in the fixed physics phase with a persistent physics_world_3d* in
++// user_data. The world owns component queries, contact cache and event delivery.
++void physics_world_system_3d(system_context& context,void* user_data);
++}
+--- a/engine/runtime/src/physics_system_3d.cpp
++++ b/engine/runtime/src/physics_system_3d.cpp
+@@ -1,414 +1,10 @@
+ #include <rain/runtime/physics_system_3d.hpp>
++#include <rain/runtime/physics_world_3d.hpp>
+ 
+-#include <rain/runtime/collider_3d_component.hpp>
+-#include <rain/runtime/local_matrix_3d_component.hpp>
+-#include <rain/runtime/physics_3d.hpp>
+-#include <rain/runtime/rigid_body_3d_component.hpp>
+-#include <rain/runtime/transform_3d_component.hpp>
+-#include <rain/runtime/velocity_3d_component.hpp>
+-#include <rain/runtime/world.hpp>
+-
+-#include <algorithm>
+-#include <cmath>
+-
+-namespace rain
+-{
+-    namespace
+-    {
+-        constexpr f32 contact_epsilon = 0.000001f;
+-
+-        [[nodiscard]] const physics_settings_3d& resolve_physics_settings(void* user_data)
+-        {
+-            static const physics_settings_3d defaults{};
+-            return user_data != nullptr ? *static_cast<const physics_settings_3d*>(user_data) : defaults;
+-        }
+-
+-        [[nodiscard]] bool has_physics_tag(const world& target_world, entity_id entity, const char* name)
+-        {
+-            return target_world.has_tag_in_hierarchy(entity, tag_id{name});
+-        }
+-
+-        // Match transform_hierarchy_system_3d's explicit inherit-parent opt-in,
+-        // and compute from current local transforms, not last frame's cache.
+-        [[nodiscard]] mat4 current_world_matrix(const world& target_world, entity_id entity)
+-        {
+-            mat4 result = mat4::identity();
+-            usize visited = 0;
+-            while (target_world.is_alive(entity) && visited++ < target_world.entity_capacity())
+-            {
+-                const auto* transform = target_world.try_get_component<transform_3d_component>(entity);
+-                if (transform == nullptr) break;
+-                const auto* matrix_override = target_world.try_get_component<local_matrix_3d_component>(entity);
+-                result = result * (matrix_override != nullptr ? matrix_override->matrix : transform->matrix());
+-
+-                if (!target_world.has_tag(entity, tag_id{"transform.inherit_parent"})) break;
+-                const entity_id parent = target_world.parent_of(entity);
+-                if (!target_world.is_entity_active(parent)) break;
+-                entity = parent;
+-            }
+-            return result;
+-        }
+-
+-        [[nodiscard]] mat4 parent_world_matrix(const world& target_world, entity_id entity)
+-        {
+-            const entity_id parent = target_world.parent_of(entity);
+-            if (target_world.has_tag(entity, tag_id{"transform.inherit_parent"}) &&
+-                target_world.is_entity_active(parent))
+-            {
+-                return current_world_matrix(target_world, parent);
+-            }
+-            return mat4::identity();
+-        }
+-
+-        [[nodiscard]] vec3 basis(const mat4& matrix, u32 row)
+-        {
+-            return {matrix.values[row][0], matrix.values[row][1], matrix.values[row][2]};
+-        }
+-
+-        [[nodiscard]] f32 basis_determinant(const mat4& matrix)
+-        {
+-            return dot(basis(matrix, 0), cross(basis(matrix, 1), basis(matrix, 2)));
+-        }
+-
+-        void translate_world(world& target_world, entity_id entity, vec3 displacement)
+-        {
+-            const mat4 parent = parent_world_matrix(target_world, entity);
+-            const vec3 axis_x = basis(parent, 0);
+-            const vec3 axis_y = basis(parent, 1);
+-            const vec3 axis_z = basis(parent, 2);
+-            const f32 determinant = dot(axis_x, cross(axis_y, axis_z));
+-            if (!std::isfinite(determinant) || std::abs(determinant) <= contact_epsilon) return;
+-
+-            auto& transform = target_world.get_component<transform_3d_component>(entity);
+-            transform.position += vec3{
+-                dot(displacement, cross(axis_y, axis_z)) / determinant,
+-                dot(displacement, cross(axis_z, axis_x)) / determinant,
+-                dot(displacement, cross(axis_x, axis_y)) / determinant
+-            };
+-        }
+-
+-        [[nodiscard]] f32 dynamic_inverse_mass(const world& target_world, entity_id entity)
+-        {
+-            if (!has_physics_tag(target_world, entity, "physics.dynamic") ||
+-                has_physics_tag(target_world, entity, "physics.static") ||
+-                has_physics_tag(target_world, entity, "physics.kinematic") ||
+-                has_physics_tag(target_world, entity, "state.frozen") ||
+-                target_world.has_component<local_matrix_3d_component>(entity) ||
+-                !target_world.has_component<velocity_3d_component>(entity))
+-            {
+-                return 0.0f;
+-            }
+-
+-            const auto* body = target_world.try_get_component<rigid_body_3d_component>(entity);
+-            if (body == nullptr || !std::isfinite(body->inverse_mass) || body->inverse_mass <= 0.0f)
+-            {
+-                return 0.0f;
+-            }
+-            const f32 determinant = basis_determinant(parent_world_matrix(target_world, entity));
+-            return std::isfinite(determinant) && std::abs(determinant) > contact_epsilon ?
+-                body->inverse_mass : 0.0f;
+-        }
+-
+-        struct world_aabb_3d
+-        {
+-            vec3 center{};
+-            vec3 half_extents{};
+-        };
+-
+-        [[nodiscard]] world_aabb_3d make_world_aabb(const mat4& matrix, const collider_3d_component& collider)
+-        {
+-            const vec3 half{
+-                std::abs(collider.half_extents.x),
+-                std::abs(collider.half_extents.y),
+-                std::abs(collider.half_extents.z)
+-            };
+-            return {
+-                .center = transform_point(collider.center, matrix),
+-                .half_extents = {
+-                    std::abs(matrix.values[0][0]) * half.x + std::abs(matrix.values[1][0]) * half.y + std::abs(matrix.values[2][0]) * half.z,
+-                    std::abs(matrix.values[0][1]) * half.x + std::abs(matrix.values[1][1]) * half.y + std::abs(matrix.values[2][1]) * half.z,
+-                    std::abs(matrix.values[0][2]) * half.x + std::abs(matrix.values[1][2]) * half.y + std::abs(matrix.values[2][2]) * half.z
+-                }
+-            };
+-        }
+-
+-        struct world_sphere_3d
+-        {
+-            vec3 center{};
+-            f32 radius = 0.0f;
+-        };
+-
+-        [[nodiscard]] world_sphere_3d make_world_sphere(const mat4& matrix, const collider_3d_component& collider)
+-        {
+-            // Bound the largest eigenvalue of A*A^T. Unlike max_basis_scale,
+-            // this stays conservative when parent nonuniform scale adds shear.
+-            const vec3 x = basis(matrix, 0);
+-            const vec3 y = basis(matrix, 1);
+-            const vec3 z = basis(matrix, 2);
+-            const f32 bound_squared = std::max({
+-                dot(x, x) + std::abs(dot(x, y)) + std::abs(dot(x, z)),
+-                dot(y, y) + std::abs(dot(y, x)) + std::abs(dot(y, z)),
+-                dot(z, z) + std::abs(dot(z, x)) + std::abs(dot(z, y))
+-            });
+-            return {
+-                .center = transform_point(collider.center, matrix),
+-                .radius = std::abs(collider.radius) * std::sqrt(std::max(bound_squared, 0.0f))
+-            };
+-        }
+-
+-        struct collision_contact_3d
+-        {
+-            bool colliding = false;
+-            // Always points from rhs toward lhs.
+-            vec3 normal{};
+-            f32 penetration = 0.0f;
+-        };
+-
+-        [[nodiscard]] collision_contact_3d intersect_aabb(const world_aabb_3d& lhs, const world_aabb_3d& rhs)
+-        {
+-            const vec3 difference = lhs.center - rhs.center;
+-            const vec3 penetration{
+-                lhs.half_extents.x + rhs.half_extents.x - std::abs(difference.x),
+-                lhs.half_extents.y + rhs.half_extents.y - std::abs(difference.y),
+-                lhs.half_extents.z + rhs.half_extents.z - std::abs(difference.z)
+-            };
+-            if (penetration.x <= 0.0f || penetration.y <= 0.0f || penetration.z <= 0.0f) return {};
+-
+-            if (penetration.x <= penetration.y && penetration.x <= penetration.z)
+-            {
+-                return {true, {difference.x < 0.0f ? -1.0f : 1.0f, 0.0f, 0.0f}, penetration.x};
+-            }
+-            if (penetration.y <= penetration.z)
+-            {
+-                return {true, {0.0f, difference.y < 0.0f ? -1.0f : 1.0f, 0.0f}, penetration.y};
+-            }
+-            return {true, {0.0f, 0.0f, difference.z < 0.0f ? -1.0f : 1.0f}, penetration.z};
+-        }
+-
+-        [[nodiscard]] collision_contact_3d intersect_sphere(const world_sphere_3d& lhs, const world_sphere_3d& rhs)
+-        {
+-            const vec3 difference = lhs.center - rhs.center;
+-            const f32 distance_squared = length_squared(difference);
+-            const f32 radius_sum = lhs.radius + rhs.radius;
+-            if (distance_squared >= radius_sum * radius_sum) return {};
+-            const f32 distance = std::sqrt(distance_squared);
+-            return {
+-                .colliding = true,
+-                .normal = distance > contact_epsilon ? difference / distance : vec3{0.0f, 1.0f, 0.0f},
+-                .penetration = radius_sum - distance
+-            };
+-        }
+-
+-        [[nodiscard]] collision_contact_3d intersect_sphere_box(const world_sphere_3d& sphere, const world_aabb_3d& box)
+-        {
+-            const vec3 offset = sphere.center - box.center;
+-            const vec3 closest{
+-                std::clamp(offset.x, -box.half_extents.x, box.half_extents.x),
+-                std::clamp(offset.y, -box.half_extents.y, box.half_extents.y),
+-                std::clamp(offset.z, -box.half_extents.z, box.half_extents.z)
+-            };
+-            const vec3 difference = offset - closest;
+-            const f32 distance_squared = length_squared(difference);
+-            if (distance_squared >= sphere.radius * sphere.radius) return {};
+-
+-            if (distance_squared > contact_epsilon * contact_epsilon)
+-            {
+-                const f32 distance = std::sqrt(distance_squared);
+-                return {true, difference / distance, sphere.radius - distance};
+-            }
+-
+-            // A center inside the box must exit through its nearest face.
+-            const vec3 face_distance{
+-                box.half_extents.x - std::abs(offset.x),
+-                box.half_extents.y - std::abs(offset.y),
+-                box.half_extents.z - std::abs(offset.z)
+-            };
+-            if (face_distance.x <= face_distance.y && face_distance.x <= face_distance.z)
+-            {
+-                return {true, {offset.x < 0.0f ? -1.0f : 1.0f, 0.0f, 0.0f}, sphere.radius + face_distance.x};
+-            }
+-            if (face_distance.y <= face_distance.z)
+-            {
+-                return {true, {0.0f, offset.y < 0.0f ? -1.0f : 1.0f, 0.0f}, sphere.radius + face_distance.y};
+-            }
+-            return {true, {0.0f, 0.0f, offset.z < 0.0f ? -1.0f : 1.0f}, sphere.radius + face_distance.z};
+-        }
+-
+-        [[nodiscard]] collision_contact_3d intersect_colliders(
+-            const mat4& lhs_matrix, const collider_3d_component& lhs,
+-            const mat4& rhs_matrix, const collider_3d_component& rhs)
+-        {
+-            if (lhs.shape == collider_shape_3d::box && rhs.shape == collider_shape_3d::box)
+-            {
+-                return intersect_aabb(make_world_aabb(lhs_matrix, lhs), make_world_aabb(rhs_matrix, rhs));
+-            }
+-            if (lhs.shape == collider_shape_3d::sphere && rhs.shape == collider_shape_3d::sphere)
+-            {
+-                return intersect_sphere(make_world_sphere(lhs_matrix, lhs), make_world_sphere(rhs_matrix, rhs));
+-            }
+-            if (lhs.shape == collider_shape_3d::sphere && rhs.shape == collider_shape_3d::box)
+-            {
+-                return intersect_sphere_box(make_world_sphere(lhs_matrix, lhs), make_world_aabb(rhs_matrix, rhs));
+-            }
+-            if (lhs.shape == collider_shape_3d::box && rhs.shape == collider_shape_3d::sphere)
+-            {
+-                auto result = intersect_sphere_box(make_world_sphere(rhs_matrix, rhs), make_world_aabb(lhs_matrix, lhs));
+-                result.normal = -result.normal;
+-                return result;
+-            }
+-            return {};
+-        }
+-
+-        [[nodiscard]] vec3 contact_velocity(const world& target_world, entity_id entity, f32 inverse_mass)
+-        {
+-            if (has_physics_tag(target_world, entity, "state.frozen") ||
+-                has_physics_tag(target_world, entity, "physics.static"))
+-            {
+-                return {};
+-            }
+-            const auto* velocity = target_world.try_get_component<velocity_3d_component>(entity);
+-            if (velocity == nullptr) return {};
+-            if (inverse_mass > 0.0f) return velocity->linear;
+-            if (has_physics_tag(target_world, entity, "physics.kinematic") &&
+-                !target_world.has_component<local_matrix_3d_component>(entity))
+-            {
+-                const mat4 parent = parent_world_matrix(target_world, entity);
+-                return basis(parent, 0) * velocity->linear.x +
+-                    basis(parent, 1) * velocity->linear.y + basis(parent, 2) * velocity->linear.z;
+-            }
+-            return {};
+-        }
+-
+-        [[nodiscard]] f32 restitution_of(const world& target_world, entity_id entity)
+-        {
+-            const auto* body = target_world.try_get_component<rigid_body_3d_component>(entity);
+-            return body != nullptr && std::isfinite(body->restitution) ?
+-                std::clamp(body->restitution, 0.0f, 1.0f) : 0.0f;
+-        }
+-
+-        void resolve_collision(world& target_world, entity_id lhs, entity_id rhs,
+-            const collision_contact_3d& contact, f32 lhs_mass, f32 rhs_mass, const physics_settings_3d& settings)
+-        {
+-            const f32 inverse_mass_sum = lhs_mass + rhs_mass;
+-            if (inverse_mass_sum <= 0.0f) return;
+-
+-            const vec3 correction = contact.normal * (contact.penetration / inverse_mass_sum);
+-            if (lhs_mass > 0.0f) translate_world(target_world, lhs, correction * lhs_mass);
+-            if (rhs_mass > 0.0f) translate_world(target_world, rhs, correction * -rhs_mass);
+-
+-            const vec3 relative_velocity =
+-                contact_velocity(target_world, lhs, lhs_mass) - contact_velocity(target_world, rhs, rhs_mass);
+-            const f32 normal_speed = dot(relative_velocity, contact.normal);
+-            if (normal_speed >= 0.0f) return;
+-
+-            const f32 restitution = -normal_speed > std::max(settings.restitution_velocity_threshold, 0.0f) ?
+-                std::max(restitution_of(target_world, lhs), restitution_of(target_world, rhs)) : 0.0f;
+-            const vec3 impulse = contact.normal * (-(1.0f + restitution) * normal_speed / inverse_mass_sum);
+-            if (lhs_mass > 0.0f)
+-            {
+-                target_world.get_component<velocity_3d_component>(lhs).linear += impulse * lhs_mass;
+-            }
+-            if (rhs_mass > 0.0f)
+-            {
+-                target_world.get_component<velocity_3d_component>(rhs).linear -= impulse * rhs_mass;
+-            }
+-        }
+-    }
+-
+-    void physics_integrate_system_3d(system_context& context, void* user_data)
+-    {
+-        if (context.target_world == nullptr || context.entity_query == nullptr ||
+-            !std::isfinite(context.delta_seconds) || context.delta_seconds <= 0.0f)
+-        {
+-            return;
+-        }
+-
+-        world& target_world = *context.target_world;
+-        const auto& settings = resolve_physics_settings(user_data);
+-        const entity_query_result entities = target_world.query_entities(*context.entity_query);
+-        for (entity_id entity : entities)
+-        {
+-            if (!target_world.has_component<transform_3d_component>(entity) ||
+-                dynamic_inverse_mass(target_world, entity) <= 0.0f)
+-            {
+-                continue;
+-            }
+-            auto& velocity = target_world.get_component<velocity_3d_component>(entity);
+-            const auto& body = target_world.get_component<rigid_body_3d_component>(entity);
+-            if (!has_physics_tag(target_world, entity, "physics.no_gravity"))
+-            {
+-                velocity.linear += settings.gravity * (body.gravity_scale * context.delta_seconds);
+-            }
+-            // Exponential damping remains nonnegative at every timestep.
+-            velocity.linear *= std::exp(-std::max(body.linear_damping, 0.0f) * context.delta_seconds);
+-            translate_world(target_world, entity, velocity.linear * context.delta_seconds);
+-        }
+-    }
+-
+-    void physics_collision_system_3d(system_context& context, void* user_data)
+-    {
+-        if (context.target_world == nullptr || context.entity_query == nullptr) return;
+-        world& target_world = *context.target_world;
+-        const auto& settings = resolve_physics_settings(user_data);
+-        const entity_query_result entities = target_world.query_entities(*context.entity_query);
+-        for (u32 iteration = 0; iteration < settings.solver_iterations; ++iteration)
+-        {
+-            for (usize lhs_index = 0; lhs_index < entities.size(); ++lhs_index)
+-            {
+-                const entity_id lhs = entities.entities[lhs_index];
+-                const auto* lhs_collider = target_world.try_get_component<collider_3d_component>(lhs);
+-                if (lhs_collider == nullptr || !target_world.has_component<transform_3d_component>(lhs) ||
+-                    has_physics_tag(target_world, lhs, "physics.trigger"))
+-                {
+-                    continue;
+-                }
+-                for (usize rhs_index = lhs_index + 1; rhs_index < entities.size(); ++rhs_index)
+-                {
+-                    const entity_id rhs = entities.entities[rhs_index];
+-                    const auto* rhs_collider = target_world.try_get_component<collider_3d_component>(rhs);
+-                    if (rhs_collider == nullptr || !target_world.has_component<transform_3d_component>(rhs) ||
+-                        has_physics_tag(target_world, rhs, "physics.trigger"))
+-                    {
+-                        continue;
+-                    }
+-                    const f32 lhs_mass = dynamic_inverse_mass(target_world, lhs);
+-                    const f32 rhs_mass = dynamic_inverse_mass(target_world, rhs);
+-                    if (lhs_mass <= 0.0f && rhs_mass <= 0.0f) continue;
+-                    const collision_contact_3d contact = intersect_colliders(
+-                        current_world_matrix(target_world, lhs), *lhs_collider,
+-                        current_world_matrix(target_world, rhs), *rhs_collider);
+-                    if (contact.colliding)
+-                    {
+-                        resolve_collision(target_world, lhs, rhs, contact, lhs_mass, rhs_mass, settings);
+-                    }
+-                }
+-            }
+-        }
+-    }
+-
+-    void physics_world_system_3d(system_context& context, void* user_data) {
+-        if (context.target_world == nullptr || user_data = nullptr)return;
+-
+-        auto* physics = static_cast <physics_world_3d*>(user_data);
+-
+-        physics->step(*context.target_world, context.delta_seconds, context.fixed_tick_index);
+-    
+-    }
+-
+-
+-    [[nodsicard]] physics_aabb_3d make_broadphase_aabb(const transform_3d_component& transform, const collider_3d_component& collider) {
+-        if (collider.shape == collider_shape_3d:; box) {
+-            const world_aabb_3d aabb = make_world_aabb(transform, collider);
+-
+-            return { .minimum = aabb.center - aabb.half_extents,.maximum = aabb.center + aabb.half_extents };
+-        }
+-
+-        const mat4 matrix = transform.matrix();
+-        const vec3 center = transform_point(collider.center.matrix);
+-
+-        const f32 radius = collider.radius * max_basis_scale(matrix);
+-
+-        const vec3 extent{ radius,radius,radius };
+-
+-        return{ .minimum = center - extent, .maximum = center + extent };
+-}+namespace rain {
++void physics_world_system_3d(system_context& context,void* user_data) {
++    if (!context.target_world || !user_data) return;
++    auto& physics = *static_cast<physics_world_3d*>(user_data);
++    physics.step(*context.target_world,context.delta_seconds,context.fixed_tick_index);
++}
++}
+--- a/engine/runtime/src/movement_system_3d.cpp
++++ b/engine/runtime/src/movement_system_3d.cpp
+@@ -27,6 +27,7 @@
+             if ((target==movement_target_3d::kinematic && !kinematic) ||
+                 (target==movement_target_3d::non_kinematic && kinematic)) continue;
+             if (target_world.has_tag_in_hierarchy(entity, tag_id{"state.frozen"}) ||
++                (kinematic && target_world.has_tag_in_hierarchy(entity, tag_id{"physics.disabled"})) ||
+                 target_world.has_tag_in_hierarchy(entity, tag_id{"physics.static"}) ||
+                 (!kinematic && target_world.has_tag_in_hierarchy(entity, tag_id{"physics.dynamic"})) ||
+                 target_world.has_component<local_matrix_3d_component>(entity))
+--- a/engine/runtime/include/rain/runtime/fixed_step.hpp
++++ b/engine/runtime/include/rain/runtime/fixed_step.hpp
+@@ -1,19 +1,16 @@
+-#pragma once 
+-#include<rain/core/types.hpp>
++#pragma once
++#include <rain/core/types.hpp>
+ 
+ namespace rain {
+-	struct fixed_step_settings {
+-		f32 delta_seconds = 1.0f / 60.0f;
+-
+-		f32 max_frame_delta = 0.25f;
+-
+-		u32 max_substeps = 0;
+-	};
+-
+-	struct fixed_step_state {
+-		f32 accumulator = 0.0f;
+-		f32 interpolation_alpha = 0.0f;
+-		u64 tick_index = 0;
+-	};
+-
+-}+struct fixed_step_settings {
++    f32 delta_seconds = 1.0f / 120.0f;
++    f32 max_frame_delta = 0.25f;
++    u32 max_substeps = 30;
++};
++struct fixed_step_state {
++    // Accumulate in double precision to avoid losing steps at frame boundaries.
++    double accumulator = 0.0;
++    f32 interpolation_alpha = 0.0f;
++    u64 tick_index = 0;
++};
++}
+--- a/engine/runtime/include/rain/runtime/system_scheduler.hpp
++++ b/engine/runtime/include/rain/runtime/system_scheduler.hpp
+@@ -3,8 +3,10 @@
+ #include<rain/core/event/event_system.hpp>
+ #include<rain/core/types.hpp>
+ #include<rain/runtime/world.hpp>
++#include<rain/runtime/fixed_step.hpp>
+ 
+ #include<algorithm>
++#include<cmath>
+ #include<string>
+ #include<vector>
+ 
+@@ -117,36 +119,64 @@
+             order_dirty_=true;
+         }
+ 
+-        //void run_all(world&target_world,event_system&events,f32 delta_seconds,u64 frame_index) {
+-        //    rebuild_order_if_needed();
+-        //}
+-
+-        void run_phase(system_phase phase,world&target_world,event_system&events, const system_run_info&run_info){
++        void run_phase(system_phase phase,world& target_world,event_system& events,const system_run_info& run_info) {
+             rebuild_order_if_needed();
+-
+-            events.begin_frame(frame_index);
+-
+-            for (const u32 system_index : sorted_system_indices_) {
+-                system_desc& system = systems_[system_index];
+-                if (system.phase != phase)continue;
+-
+-                if (!system.enabled || system.function == nullptr)continue;
+-
++            events.begin_frame(run_info.frame_index);
++            for (const u32 index : sorted_system_indices_) {
++                auto& system = systems_[index];
++                if (system.phase!=phase || !system.enabled || !system.function) continue;
+                 system_context context{
+-                    .target_world = &target_world,
+-                    .events = &events,
+-                    .entity_query = &system.entity_query,
+-                    .phase = system.phase,
+-                    .tick_type = run_info.tick_type,
+-                    .delta_seconds = delta_seconds,
+-                    .interpolation_alpha = run_info.interpolation,
+-                    .frame_index = frame_index,
+-                    .fixed_tick_index = run_info.fixed_tick_index
+-
+-                };
+-
+-                system.function(context, system.user_data);
+-            }
++                    .target_world=&target_world,.events=&events,.entity_query=&system.entity_query,
++                    .phase=system.phase,.tick_type=run_info.tick_type,.delta_seconds=run_info.delta_seconds,
++                    .interpolation_alpha=run_info.interpolation_alpha,.frame_index=run_info.frame_index,
++                    .fixed_tick_index=run_info.fixed_tick_index};
++                system.function(context,system.user_data);
++            }
++        }
++
++        // Production application and headless samples share the same fixed-step runner.
++        // Excess whole steps beyond the budget are discarded; the fractional remainder
++        // is retained for interpolation, preventing an unbounded catch-up backlog.
++        void run_frame(world& target_world,event_system& events,f32 frame_delta,u64 frame_index,
++            const fixed_step_settings& settings,fixed_step_state& state) {
++            const f32 delta = std::isfinite(frame_delta) && frame_delta>0 ? frame_delta : 0.0f;
++            if (!std::isfinite(state.accumulator) || state.accumulator<0) state.accumulator=0;
++            if (!std::isfinite(state.interpolation_alpha)) state.interpolation_alpha=0;
++            system_run_info variable{.delta_seconds=delta,.interpolation_alpha=state.interpolation_alpha,
++                .frame_index=frame_index,.fixed_tick_index=state.tick_index,.tick_type=system_tick_type::variable};
++            for (auto phase : {system_phase::pre_update,system_phase::input,system_phase::gameplay,system_phase::movement})
++                run_phase(phase,target_world,events,variable);
++
++            if (std::isfinite(settings.delta_seconds) && settings.delta_seconds>0 &&
++                std::isfinite(settings.max_frame_delta) && settings.max_frame_delta>0 && settings.max_substeps>0) {
++                const double step = settings.delta_seconds;
++                // Settings/frame deltas enter as float; tolerate their boundary rounding.
++                const double epsilon = step * 0.00001;
++                state.accumulator += std::min(delta,settings.max_frame_delta);
++                u32 count=0;
++                while (state.accumulator+epsilon>=step && count<settings.max_substeps) {
++                    const system_run_info fixed{.delta_seconds=settings.delta_seconds,.interpolation_alpha=0,
++                        .frame_index=frame_index,.fixed_tick_index=state.tick_index,.tick_type=system_tick_type::fixed};
++                    run_phase(system_phase::physics,target_world,events,fixed);
++                    run_phase(system_phase::post_physics,target_world,events,fixed);
++                    state.accumulator = std::max(state.accumulator-step,0.0);
++                    ++state.tick_index;
++                    ++count;
++                }
++                if (state.accumulator+epsilon>=step) {
++                    state.accumulator = std::fmod(state.accumulator,step);
++                    if (state.accumulator+epsilon>=step) state.accumulator=0;
++                }
++                state.interpolation_alpha = std::clamp(static_cast<f32>(state.accumulator/step),
++                    0.0f,std::nextafter(1.0f,0.0f));
++            } else {
++                state.accumulator=0;
++                state.interpolation_alpha=0;
++            }
++            variable.interpolation_alpha=state.interpolation_alpha;
++            variable.fixed_tick_index=state.tick_index;
++            for (auto phase : {system_phase::animation,system_phase::post_update,system_phase::render_prepare})
++                run_phase(phase,target_world,events,variable);
+         }
+ 
+         [[nodiscard]] std::vector<system_debug_info>debug_infos()const {
+--- a/engine/app/include/rain/app/application.hpp
++++ b/engine/app/include/rain/app/application.hpp
+@@ -26,6 +26,7 @@
+ 		u32 height = 720;
+ 		bool resizable = true;
+ 		render_clear_color clear_color{};
++		fixed_step_settings physics_step{};
+ 	};
+ 
+ 	class application {
+@@ -92,7 +93,7 @@
+ 
+ 		input_action_map input_;
+ 
+-		fixed_step_settings fixed_step_settings_{.delta_seconds = 1.0f/60.0f,.max_frame_delta = 0.25f,.max_substeps =8};
++		fixed_step_settings fixed_step_settings_;
+ 		fixed_step_state fixed_step_state_;
+ 	};
+ }--- a/engine/app/src/application.cpp
++++ b/engine/app/src/application.cpp
+@@ -11,6 +11,7 @@
+ 		})
+ 		,renderer_(create_d3d11_render_backend(main_window_))
+ 		,clear_color_(desc.clear_color)
++		,fixed_step_settings_(desc.physics_step)
+ 	{
+ 		assets_ = std::make_unique<texture_asset_registry>(*renderer_);
+ 		meshes_3d_ = std::make_unique<mesh_3d_registry>(*renderer_);
+@@ -45,7 +46,7 @@
+ 	}
+ 
+ 	int application::run() {
+-		using clock = std::chrono::high_resolution_clock;
++		using clock = std::chrono::steady_clock;
+ 
+ 		running_ = true;
+ 
+@@ -70,59 +71,8 @@
+ 				current_layer->on_update(context);
+ 			}
+ 
+-			const system_run_info variable_run{
+-				.delta_seconds = delta_seconds,
+-				.interpolation_alpha = fixed_step_state_.interpolation_alpha,
+-				.frame_index = frame_index_,
+-				.fixed_tick_index = fixed_step_state_.tick_index,
+-				.tick_type = system_tick_type::varible
+-			}
+-
+-
+-			scheduler_.run_phase(system_phase::pre_update,target_world_, events_, variable_run);
+-			scheduler_.run_phase(system_phase::input, target_world_, events_, variable_run);
+-			scheduler_.run_phase(system_phase::gameplay, target_world_, events_, variable_run);
+-			scheduler_.run_phase(system_phase::movement, target_world_, events_, variable_run);
+-
+-
+-			//physics
+-			const f32 physics_frame_delta = std::min(delta_seconds,fixed_step_settings_.max_frame_delta );
+-			const f32 max_accumulator = fixed_step_settings_.delta_seconds * static_cast<f32>(fixed_step_settings_.max_substeps);
+-			fixed_step_state_.accumulator = std::min(fixed_step_state_.accumulator + physics_frame_delta, max_accumulator);
+-
+-			u32 substep_count = 0;
+-
+-			while (fixed_step_state_.accumulator >= fixed_step_settings_.delta_seconds && substep_count < fixed_step_settings_.max_substeps) {
+-				const system_run_info fixed_run{
+-					.delta_seconds = fixed_step_settings_.delta_seconds,
+-					.interpolation_alpha = 0.0f,
+-					.frame_index = frame_index,
+-					.fixed_tick_index = fixed_step_state_.tick_index,
+-					.tick_type = system_tick_type::fixed
+-				};
+-
+-				scheduler_.run_phase(system_phase::physics, target_world_, events_, variable_run);
+-				scheduler_.run_phase(system_phase::post_physics, target_world_, events_, variable_run);
+-
+-				fixed_step_state_.accumulator -= fixed_step_settings_.delta_seconds;
+-				++fixed_step_state_.tick_index;
+-				++substep_count;
+-			}
+-
+-			//
+-			fixed_step_state_.interpolation_alpha = fixed_step_state_.accumulator / fixed_step_settings_.delta_seconds;
+-
+-			const system_run_info post_run{  
+-				.delta_seconds = delta_seconds,
+-				.interpolation_alpha = fixed_step_state_.interpolation_alpha,
+-				.frame_index = frame_index_,
+-				.fixed_tick_index = fixed_step_state_.tick_index,
+-				.tick_type = system_tick_type::variable
+-			};
+-
+-			scheduler_.run_phase(system_phase::animation, target_world_, events_, post_run);
+-			scheduler_.run_phase(system_phase::post_update, target_world_, events_, post_run);
+-			scheduler_.run_phase(system_phase::render_prepare, target_world_, events_, post_run);
++            scheduler_.run_frame(target_world_,events_,delta_seconds,frame_index_,
++                fixed_step_settings_,fixed_step_state_);
+ 
+ 			events_.dispatch_all_queued();
+ 
+--- a/engine/runtime/CMakeLists.txt
++++ b/engine/runtime/CMakeLists.txt
+@@ -7,6 +7,8 @@
+         src/movement_system_2d.cpp
+         src/movement_system_3d.cpp
+         src/physics_system_3d.cpp
++        src/physics_world_3d.cpp
++        src/physics_broadphase_3d.cpp
+         src/camera_input_system_3d.cpp
+         src/rotation_system_3d.cpp
+         src/transform_hierarchy_system_3d.cpp
+@@ -29,6 +31,10 @@
+         include/rain/runtime/collider_3d_component.hpp
+         include/rain/runtime/physics_3d.hpp
+         include/rain/runtime/physics_system_3d.hpp
++        include/rain/runtime/physics_world_3d.hpp
++        include/rain/runtime/physics_broadphase_3d.hpp
++        include/rain/runtime/collision_filter_3d_component.hpp
++        include/rain/runtime/fixed_step.hpp
+         include/rain/runtime/camera_input_3d_component.hpp
+         include/rain/runtime/camera_input_system_3d.hpp
+         include/rain/runtime/angular_velocity_3d_component.hpp
+--- a/samples/sample_2d_action/CMakeLists.txt
++++ b/samples/sample_2d_action/CMakeLists.txt
+@@ -4,6 +4,7 @@
+     PRIVATE
+         src/main.cpp
+         src/sample_physics_3d.cpp
++        src/sample_physics_world_tests.cpp
+         src/sample_physics_3d.hpp
+         src/sample_2d_world_builder.cpp
+         src/sample_2d_world_builder.hpp
+@@ -28,6 +29,6 @@
+     add_test(NAME rain_physics_v0_regressions COMMAND sample_2d_action --physics-test)
+     set_tests_properties(rain_physics_v0_regressions PROPERTIES
+         TIMEOUT 30
+-        LABELS "physics;sample"
++        LABELS "physics;physics_world;sample"
+     )
+ endif()
+--- a/samples/sample_2d_action/src/main.cpp
++++ b/samples/sample_2d_action/src/main.cpp
+@@ -9,6 +9,7 @@
+ #include <rain/render/render_system_2d.hpp>
+ #include <rain/render/render_system_3d.hpp>
+ #include <rain/runtime/movement_system_2d.hpp>
++#include <rain/runtime/collision_filter_3d_component.hpp>
+ #include <rain/runtime/transform_2d_component.hpp>
+ #include <rain/runtime/velocity_2d_component.hpp>
+ #include <rain/runtime/velocity_3d_component.hpp>
+@@ -72,6 +73,7 @@
+         renderer_3d_=std::make_unique<render_system_3d>(
+             *context.renderer, *context.meshes_3d, *context.materials_3d);
+         handles_3d_=sample_3d::build_sample_3d_world(w, {cube_mesh_,cube_material_,sphere_mesh_});
++        physics_.log_events=true;
+         sample_3d::register_sample_3d_systems(*context.scheduler, physics_, context.input);
+         context.scheduler->add_system({.system_name="system.render_prepare_3d", .owner_name="sample_2d_action",
+             .phase=system_phase::render_prepare, .priority=10, .entity_query={},
+@@ -98,15 +100,15 @@
+             .phase=system_phase::render_prepare, .entity_query=render_system_2d::make_entity_query(),
+             .function=render_prepare_system_2d, .user_data=renderer_2d_.get()});
+ 
+-        log_info("Physics V0: blue=dynamic, yellow=frozen, purple=no gravity, green=kinematic.");
+-        log_info("Orange sphere falls through the red trigger platform and bounces on the ground.");
++        log_info("Physics World: blue=dynamic, yellow=frozen, purple=no gravity, green=kinematic.");
++        log_info("Orange sphere turns cyan with state.in_trigger while crossing the red trigger; enter/exit events are logged.");
++        log_info("White cube ignores the cyan platform by collision mask, but lands on the ground. L toggles platform collisions.");
+         log_info("WASD move; Q/E down/up; arrows look; Shift boost; Esc quit.");
+         log_info("Space launch blue; F freeze blue; V release/freeze yellow; G purple gravity; T platform solidity.");
+-        log_info("R reset scene + camera; Tab show/hide 2D; H hide/show green 2D rectangle; B freeze 2D movement.");
++        log_info("P toggle blue physics.disabled; R reset scene + camera; Tab show/hide 2D; H hide/show green 2D rectangle; B freeze 2D movement.");
+         for (const auto& info : context.scheduler->debug_infos())
+             log_info("registered "+info.system_name+" ["+to_string(info.phase)+"]");
+-        for (const auto& info : physics_.fixed_scheduler.debug_infos())
+-            log_info("registered fixed 120 Hz "+info.system_name+" ["+to_string(info.phase)+"]");
++
+     }
+ 
+     void on_update(application_context& context) override {
+@@ -115,7 +117,7 @@
+         if (input.is_pressed(string_id{"app.quit"})) context.main_window->request_close();
+         if (input.is_pressed(string_id{"demo.reset"})) {
+             sample_3d::reset_sample_3d_world(w,handles_3d_);
+-            physics_.accumulator=0;
++            physics_.reset(w);
+         }
+         if (input.is_pressed(string_id{"demo.launch"})) {
+             w.remove_tag(handles_3d_.cube,tag_id{"state.frozen"});
+@@ -125,6 +127,15 @@
+         if (input.is_pressed(string_id{"demo.release"})) toggle_tag(w,handles_3d_.frozen_cube,"state.frozen");
+         if (input.is_pressed(string_id{"demo.gravity"})) toggle_tag(w,handles_3d_.floating_cube,"physics.no_gravity");
+         if (input.is_pressed(string_id{"demo.trigger"})) toggle_tag(w,handles_3d_.trigger_platform,"physics.trigger");
++        if (input.is_pressed(string_id{"demo.disabled"})) toggle_tag(w,handles_3d_.cube,"physics.disabled");
++        if (input.is_pressed(string_id{"demo.filter"})) {
++            auto& filter=w.get_component<collision_filter_3d_component>(handles_3d_.filtered_cube);
++            filter.mask^=collision_layer_3d::enemy;
++            auto& transform=w.get_component<transform_3d_component>(handles_3d_.filtered_cube);
++            transform.position={-6,5,2};
++            w.get_component<velocity_3d_component>(handles_3d_.filtered_cube).linear={};
++            log_info((filter.mask & collision_layer_3d::enemy)!=0 ? "White cube: cyan platform enabled" : "White cube: cyan platform ignored");
++        }
+         if (input.is_pressed(string_id{"demo.overlay"})) show_2d_=!show_2d_;
+         if (input.is_pressed(string_id{"demo.hide_2d"})) toggle_tag(w,handles_2d_.green_rect,"render.hidden");
+         if (input.is_pressed(string_id{"demo.freeze_2d"})) toggle_tag(w,handles_2d_.moving_rect,"state.frozen");
+@@ -144,6 +155,13 @@
+             ", cube y="+std::to_string(w.get_component<transform_3d_component>(handles_3d_.cube).position.y)+
+             ", sphere y="+std::to_string(w.get_component<transform_3d_component>(handles_3d_.sphere).position.y)+
+             ", visible="+std::to_string(renderer_3d_->stats().visible_count));
++        const auto& stats=physics_.simulation.stats();
++        log_info("Physics World: colliders="+std::to_string(stats.collider_count)+
++            ", broadphase pairs="+std::to_string(stats.broadphase_pair_count)+
++            ", narrowphase tests="+std::to_string(stats.narrowphase_test_count)+
++            ", contacts="+std::to_string(stats.collision_count)+
++            ", trigger enter/stay/exit="+std::to_string(physics_.trigger_enters)+"/"+
++            std::to_string(physics_.trigger_stays)+"/"+std::to_string(physics_.trigger_exits));
+         renderer_2d_.reset();
+         renderer_3d_.reset();
+         context.materials->destroy(solid_material_);
+@@ -179,6 +197,8 @@
+         input.bind_button(string_id{"demo.gravity"},key_code::g);
+         input.bind_button(string_id{"demo.trigger"},key_code::t);
+         input.bind_button(string_id{"demo.reset"},key_code::r);
++        input.bind_button(string_id{"demo.disabled"},key_code::p);
++        input.bind_button(string_id{"demo.filter"},key_code::l);
+         input.bind_button(string_id{"demo.overlay"},key_code::tab);
+         input.bind_button(string_id{"demo.hide_2d"},key_code::h);
+         input.bind_button(string_id{"demo.freeze_2d"},key_code::b);
+@@ -214,7 +234,7 @@
+             return 2;
+         }
+     }
+-    rain::application app({.title="Rain Engine - Physics V0 | WASD + arrows | Space F V G T | R reset | Tab 2D",
++    rain::application app({.title="Rain Engine - Physics World | WASD + arrows | Space F V G T P L | R reset | Tab 2D",
+         .width=1280, .height=720, .resizable=true,
+         .clear_color={.r=0.06f,.g=0.08f,.b=0.13f,.a=1}});
+     app.push_layer(std::make_unique<sample_layer>(frame_limit));
+--- a/samples/sample_2d_action/src/sample_physics_3d.hpp
++++ b/samples/sample_2d_action/src/sample_physics_3d.hpp
+@@ -1,26 +1,41 @@
+ #pragma once
+ 
++#include <rain/core/math/vec4.hpp>
+ #include <rain/platform/input_action.hpp>
+-#include <rain/runtime/physics_3d.hpp>
++#include <rain/runtime/fixed_step.hpp>
++#include <rain/runtime/physics_world_3d.hpp>
+ #include <rain/runtime/movement_system_3d.hpp>
+ #include <rain/runtime/system_scheduler.hpp>
+ 
+ namespace sample_3d {
++struct physics_feedback_component {
++    rain::vec4 normal_tint{1,1,1,1};
++    rain::u32 trigger_contacts=0;
++};
++
+ // The layer owns this object for as long as its registered systems exist.
+ struct physics_demo_systems {
+-    rain::physics_settings_3d settings;
++    rain::physics_world_3d simulation;
+     rain::movement_settings_3d kinematic_movement{rain::movement_target_3d::kinematic};
+     rain::movement_settings_3d free_movement{rain::movement_target_3d::non_kinematic};
+-    rain::system_scheduler fixed_scheduler;
+-    double accumulator=0;
++    // Headless tests use exactly the same frame runner as application::run.
++    rain::fixed_step_settings fixed_settings;
++    rain::fixed_step_state fixed_state;
+     rain::u64 step_count=0;
++    rain::u64 collision_enters=0,trigger_enters=0,trigger_stays=0,trigger_exits=0;
++    bool log_events=false;
+ 
+-    physics_demo_systems();
++    physics_demo_systems()=default;
+     physics_demo_systems(const physics_demo_systems&)=delete;
+     physics_demo_systems& operator=(const physics_demo_systems&)=delete;
+-    static void advance(rain::system_context& context,void* user_data);
++    void reset(rain::world& target_world);
++    void run_test_frame(rain::system_scheduler& scheduler,rain::world& target_world,
++        rain::event_system& events,rain::f32 delta_seconds,rain::u64 frame_index);
++    static void consume_events(rain::system_context& context,void* user_data);
+ };
+ 
++struct physics_sample_test_result { int checks=0,failures=0; };
++[[nodiscard]] physics_sample_test_result run_physics_world_tests();
+ void register_sample_3d_systems(rain::system_scheduler& scheduler,
+     physics_demo_systems& physics,rain::input_action_map* input);
+ [[nodiscard]] int run_physics_sample_tests();
+--- a/samples/sample_2d_action/src/sample_physics_3d.cpp
++++ b/samples/sample_2d_action/src/sample_physics_3d.cpp
+@@ -1,6 +1,8 @@
+ #include "sample_physics_3d.hpp"
+ #include "sample_3d_world_builder.hpp"
+ 
++#include <rain/core/log.hpp>
++#include <rain/render/mesh_3d_component.hpp>
+ #include <rain/runtime/camera_input_3d_component.hpp>
+ #include <rain/runtime/camera_input_system_3d.hpp>
+ #include <rain/runtime/collider_3d_component.hpp>
+@@ -26,17 +28,13 @@
+     query.required_components={get_type_id<transform_3d_component>(),get_type_id<velocity_3d_component>()};
+     return query;
+ }
+-entity_query_desc collision_query() {
+-    entity_query_desc query;
+-    query.required_components={get_type_id<transform_3d_component>(),get_type_id<collider_3d_component>()};
+-    return query;
+-}
+ void kinematic_patrol(system_context& context,void*) {
+     if (!context.target_world || !context.entity_query) return;
+     auto& w=*context.target_world;
+     for (auto e : w.query_entities(*context.entity_query)) {
+         if (!w.has_tag_in_hierarchy(e,tag_id{"physics.kinematic"}) ||
+-            w.has_tag_in_hierarchy(e,tag_id{"state.frozen"})) continue;
++            w.has_tag_in_hierarchy(e,tag_id{"state.frozen"}) ||
++            w.has_tag_in_hierarchy(e,tag_id{"physics.disabled"})) continue;
+         const auto& transform=w.get_component<transform_3d_component>(e);
+         auto& velocity=w.get_component<velocity_3d_component>(e);
+         if (transform.position.x>=3) velocity.linear.x=-1.5f;
+@@ -45,37 +43,60 @@
+ }
+ }
+ 
+-physics_demo_systems::physics_demo_systems() {
+-    auto patrol=movement_query();
+-    patrol.required_tags.require_all(tag_id{"sample.kinematic_patrol"});
+-    fixed_scheduler.add_system({.system_name="sample.kinematic_patrol", .owner_name="sample_2d_action",
+-        .phase=system_phase::movement, .priority=10, .entity_query=patrol, .function=kinematic_patrol});
+-    fixed_scheduler.add_system({.system_name="system.movement_3d.kinematic", .owner_name="sample_2d_action",
+-        .phase=system_phase::movement, .entity_query=movement_query(), .function=movement_system_3d,
+-        .user_data=&kinematic_movement});
+-    auto integrate=movement_query();
+-    integrate.required_components.push_back(get_type_id<rigid_body_3d_component>());
+-    fixed_scheduler.add_system({.system_name="system.physics_integrate_3d", .owner_name="sample_2d_action",
+-        .phase=system_phase::physics, .priority=100, .entity_query=integrate,
+-        .function=physics_integrate_system_3d, .user_data=&settings});
+-    fixed_scheduler.add_system({.system_name="system.physics_collision_3d", .owner_name="sample_2d_action",
+-        .phase=system_phase::physics, .entity_query=collision_query(),
+-        .function=physics_collision_system_3d, .user_data=&settings});
+-}
+-
+-void physics_demo_systems::advance(system_context& context,void* user_data) {
+-    if (!context.target_world || !context.events || !user_data ||
+-        !std::isfinite(context.delta_seconds) || context.delta_seconds<=0) return;
++void physics_demo_systems::reset(world& w) {
++    simulation.reset();
++    fixed_state={};
++    step_count=collision_enters=trigger_enters=trigger_stays=trigger_exits=0;
++    entity_query_desc query;
++    query.required_components={get_type_id<physics_feedback_component>()};
++    query.require_active=false;
++    for (auto entity : w.query_entities(query)) {
++        auto& feedback=w.get_component<physics_feedback_component>(entity);
++        while (feedback.trigger_contacts>0) {
++            w.remove_tag(entity,tag_id{"state.in_trigger"});
++            --feedback.trigger_contacts;
++        }
++        if (auto* mesh=w.try_get_component<mesh_3d_component>(entity)) mesh->tint=feedback.normal_tint;
++    }
++}
++
++void physics_demo_systems::run_test_frame(system_scheduler& scheduler,world& w,
++    event_system& events,f32 delta_seconds,u64 frame_index) {
++    scheduler.run_frame(w,events,delta_seconds,frame_index,fixed_settings,fixed_state);
++}
++
++void physics_demo_systems::consume_events(system_context& context,void* user_data) {
++    if (!context.target_world || !user_data) return;
+     auto& physics=*static_cast<physics_demo_systems*>(user_data);
+-    constexpr double fixed_step=1.0/120.0;
+-    // Bound catch-up work after a debugger pause; this V0 sample intentionally drops excess time.
+-    physics.accumulator+=std::min(static_cast<double>(context.delta_seconds),0.25);
+-    for (u32 step=0; step<30 && physics.accumulator+1e-9>=fixed_step; ++step) {
+-        physics.fixed_scheduler.run_all(*context.target_world,*context.events,
+-            static_cast<f32>(fixed_step),context.frame_index);
+-        physics.accumulator=std::max(0.0,physics.accumulator-fixed_step);
+-        ++physics.step_count;
+-    }
++    auto& w=*context.target_world;
++    ++physics.step_count;
++    for (const auto& event : physics.simulation.events()) {
++        if (!event.trigger) {
++            if (event.type==collision_event_type_3d::enter) ++physics.collision_enters;
++            continue;
++        }
++        if (event.type==collision_event_type_3d::enter) ++physics.trigger_enters;
++        else if (event.type==collision_event_type_3d::stay) ++physics.trigger_stays;
++        else ++physics.trigger_exits;
++        if (physics.log_events && event.type!=collision_event_type_3d::stay)
++            log_info(std::string{"Trigger "}+(event.type==collision_event_type_3d::enter ? "enter" : "exit")+
++                " at physics tick "+std::to_string(event.fixed_tick_index));
++        for (auto entity : {event.first,event.second}) {
++            auto* feedback=w.try_get_component<physics_feedback_component>(entity);
++            if (!feedback) continue;
++            if (event.type==collision_event_type_3d::enter) {
++                ++feedback->trigger_contacts;
++                w.add_tag(entity,tag_id{"state.in_trigger"});
++            } else if (event.type==collision_event_type_3d::exit && feedback->trigger_contacts>0) {
++                --feedback->trigger_contacts;
++                w.remove_tag(entity,tag_id{"state.in_trigger"});
++            }
++            if (auto* mesh=w.try_get_component<mesh_3d_component>(entity))
++                mesh->tint=feedback->trigger_contacts>0 ? vec4{0.1f,1,1,1} : feedback->normal_tint;
++        }
++    }
++    // Consume every fixed step: render frames with several steps never lose enter/exit.
++    physics.simulation.clear_events();
+ }
+ 
+ void register_sample_3d_systems(system_scheduler& scheduler,
+@@ -90,8 +111,19 @@
+     scheduler.add_system({.system_name="system.movement_3d", .owner_name="sample_2d_action",
+         .phase=system_phase::movement, .entity_query=movement, .function=movement_system_3d,
+         .user_data=&physics.free_movement});
+-    scheduler.add_system({.system_name="sample.physics_fixed_step", .owner_name="sample_2d_action",
+-        .phase=system_phase::physics, .entity_query={}, .function=physics_demo_systems::advance, .user_data=&physics});
++    auto patrol=movement_query();
++    patrol.required_tags.require_all(tag_id{"sample.kinematic_patrol"});
++    scheduler.add_system({.system_name="sample.kinematic_patrol", .owner_name="sample_2d_action",
++        .phase=system_phase::physics, .priority=300, .entity_query=patrol, .function=kinematic_patrol});
++    scheduler.add_system({.system_name="system.movement_3d.kinematic", .owner_name="sample_2d_action",
++        .phase=system_phase::physics, .priority=200, .entity_query=movement_query(), .function=movement_system_3d,
++        .user_data=&physics.kinematic_movement});
++    scheduler.add_system({.system_name="system.physics_world_3d", .owner_name="sample_2d_action",
++        .phase=system_phase::physics, .priority=100, .entity_query={},
++        .function=physics_world_system_3d, .user_data=&physics.simulation});
++    scheduler.add_system({.system_name="sample.physics_events", .owner_name="sample_2d_action",
++        .phase=system_phase::post_physics, .entity_query={},
++        .function=physics_demo_systems::consume_events, .user_data=&physics});
+     entity_query_desc hierarchy;
+     hierarchy.required_components={get_type_id<transform_3d_component>()};
+     hierarchy.required_tags.require_all(tag_id{"transform.3d"}).reject(tag_id{"transform.disabled"});
+@@ -116,7 +148,7 @@
+     const auto y=[&](entity_id e) { return w.get_component<transform_3d_component>(e).position.y; };
+     bool sphere_bounced=false, sphere_passed_trigger=false;
+     for (u64 frame=0;frame<360;++frame) {
+-        scheduler.run_all(w,events,1.0f/60.0f,frame);
++        physics.run_test_frame(scheduler,w,events,1.0f/60.0f,frame);
+         sphere_bounced |= w.get_component<velocity_3d_component>(h.sphere).linear.y>0.5f;
+         sphere_passed_trigger |= y(h.sphere)<1.0f;
+     }
+@@ -139,7 +171,7 @@
+     physics_demo_systems other_physics;
+     const auto other_h=build_sample_3d_world(other,{});
+     register_sample_3d_systems(other_scheduler,other_physics,nullptr);
+-    for (u64 frame=0;frame<180;++frame) other_scheduler.run_all(other,other_events,1.0f/30.0f,frame);
++    for (u64 frame=0;frame<180;++frame) other_physics.run_test_frame(other_scheduler,other,other_events,1.0f/30.0f,frame);
+     check(other_physics.step_count==physics.step_count &&
+         near(other.get_component<transform_3d_component>(other_h.sphere).position.y,y(h.sphere)) &&
+         near(other.get_component<transform_3d_component>(other_h.kinematic_cube).position.x,
+@@ -148,7 +180,7 @@
+ 
+     w.remove_tag(h.frozen_cube,tag_id{"state.frozen"});
+     w.remove_tag(h.floating_cube,tag_id{"physics.no_gravity"});
+-    for (u64 frame=360;frame<480;++frame) scheduler.run_all(w,events,1.0f/60.0f,frame);
++    for (u64 frame=360;frame<480;++frame) physics.run_test_frame(scheduler,w,events,1.0f/60.0f,frame);
+     check(near(y(h.frozen_cube),0.6f),"removing frozen tag resumes falling");
+     check(near(y(h.floating_cube),0.6f),"removing no_gravity tag resumes falling");
+     reset_sample_3d_world(w,h);
+@@ -158,7 +190,7 @@
+         "reset is idempotent for reference-counted tags");
+     w.remove_tag(h.trigger_platform,tag_id{"physics.trigger"});
+     w.get_component<rigid_body_3d_component>(h.sphere).restitution=0;
+-    for (u64 frame=0;frame<240;++frame) scheduler.run_all(w,events,1.0f/60.0f,frame);
++    for (u64 frame=0;frame<240;++frame) physics.run_test_frame(scheduler,w,events,1.0f/60.0f,frame);
+     check(near(y(h.sphere),2.77f),"removing trigger tag makes platform solid");
+ 
+     // Small arrangements exercise runtime rules beyond the visible scene.
+@@ -182,28 +214,28 @@
+     register_sample_3d_systems(motion_scheduler,motion_physics,nullptr);
+     const auto moving=add_body(motion,{0,0,0},collider_shape_3d::box,1);
+     motion.get_component<velocity_3d_component>(moving).linear={2,0,0};
+-    for (u64 frame=0;frame<60;++frame) motion_scheduler.run_all(motion,motion_events,1.0f/60.0f,frame);
++    for (u64 frame=0;frame<60;++frame) motion_physics.run_test_frame(motion_scheduler,motion,motion_events,1.0f/60.0f,frame);
+     check(near(motion.get_component<transform_3d_component>(moving).position.x,2),
+         "dynamic body is not integrated twice by movement and physics");
+     motion.set_entity_active(moving,false);
+-    motion_scheduler.run_all(motion,motion_events,0.1f,60);
++    motion_physics.run_test_frame(motion_scheduler,motion,motion_events,0.1f,60);
+     check(near(motion.get_component<transform_3d_component>(moving).position.x,2),"inactive body is excluded");
+     motion.set_entity_active(moving,true);
+     motion.get_component<rigid_body_3d_component>(moving).inverse_mass=0;
+-    motion_scheduler.run_all(motion,motion_events,0.1f,61);
++    motion_physics.run_test_frame(motion_scheduler,motion,motion_events,0.1f,61);
+     check(near(motion.get_component<transform_3d_component>(moving).position.x,2),"zero inverse mass is immovable");
+     const u64 old_steps=motion_physics.step_count;
+-    motion_scheduler.run_all(motion,motion_events,-1,62);
+-    motion_scheduler.run_all(motion,motion_events,std::numeric_limits<f32>::quiet_NaN(),63);
++    motion_physics.run_test_frame(motion_scheduler,motion,motion_events,-1,62);
++    motion_physics.run_test_frame(motion_scheduler,motion,motion_events,std::numeric_limits<f32>::quiet_NaN(),63);
+     check(motion_physics.step_count==old_steps,"invalid time does not advance physics");
+-    motion_scheduler.run_all(motion,motion_events,10,64);
++    motion_physics.run_test_frame(motion_scheduler,motion,motion_events,10,64);
+     check(motion_physics.step_count-old_steps==30,"long frames bound catch-up to 30 substeps");
+ 
+-    auto query=collision_query();
+-    const auto collide=[&](world& target) {
+-        system_context context{.target_world=&target,.entity_query=&query,
+-            .phase=system_phase::physics,.delta_seconds=1.0f/120.0f};
+-        physics_collision_system_3d(context,nullptr);
++    const auto collide=[](world& target) {
++        physics_world_3d simulation;
++        // The public world step includes integration; use a minimal positive step
++        // to isolate the existing contact/impulse oracle without another solver API.
++        simulation.step(target,0.000001f,0);
+     };
+     world pair;
+     const auto a=add_body(pair,{0,0,0},collider_shape_3d::box,1);
+@@ -258,12 +290,12 @@
+     check(inherited.set_parent(child,parent),"physics parent setup");
+     inherited.get_component<velocity_3d_component>(child).linear={1,0,0};
+     for (u64 frame=0;frame<60;++frame)
+-        inherited_scheduler.run_all(inherited,inherited_events,1.0f/60.0f,frame);
++        inherited_physics.run_test_frame(inherited_scheduler,inherited,inherited_events,1.0f/60.0f,frame);
+     const auto child_position=inherited.get_component<world_transform_3d_component>(child).position;
+     check(near(child_position.x,8) && near(child_position.y,0),
+         "world-space physics velocity survives rotated scaled parent and inherited no_gravity");
+     inherited.add_tag(parent,tag_id{"state.frozen"});
+-    inherited_scheduler.run_all(inherited,inherited_events,0.1f,60);
++    inherited_physics.run_test_frame(inherited_scheduler,inherited,inherited_events,0.1f,60);
+     check(near(inherited.get_component<world_transform_3d_component>(child).position.x,8),
+         "parent frozen tag suspends child physics");
+ 
+@@ -272,14 +304,24 @@
+     inherited.remove_tag(child,tag_id{"object.movable"});
+     inherited.get_component<velocity_3d_component>(child).linear={0,1,0};
+     const auto local_before=inherited.get_component<transform_3d_component>(child).position;
+-    inherited_physics.accumulator=0;
+-    inherited_scheduler.run_all(inherited,inherited_events,1.0f/240.0f,61);
++    inherited_physics.fixed_state.accumulator=0;
++    inherited_physics.run_test_frame(inherited_scheduler,inherited,inherited_events,1.0f/240.0f,61);
+     check(near(inherited.get_component<transform_3d_component>(child).position.y,local_before.y),
+         "inherited kinematic body waits for a fixed step");
+-    inherited_scheduler.run_all(inherited,inherited_events,1.0f/240.0f,62);
++    inherited_physics.run_test_frame(inherited_scheduler,inherited,inherited_events,1.0f/240.0f,62);
+     check(near(inherited.get_component<transform_3d_component>(child).position.y,
+         local_before.y+1.0f/120.0f,0.00001f),
+         "inherited kinematic body moves once at fixed rate without object.movable");
++
++    const auto before_disabled=inherited.get_component<transform_3d_component>(child).position;
++    inherited.add_tag(parent,tag_id{"physics.disabled"});
++    inherited_physics.run_test_frame(inherited_scheduler,inherited,inherited_events,0.1f,63);
++    check(near(inherited.get_component<transform_3d_component>(child).position.y,before_disabled.y),
++        "inherited physics.disabled suspends kinematic movement");
++    inherited.remove_tag(parent,tag_id{"physics.disabled"});
++    inherited_physics.run_test_frame(inherited_scheduler,inherited,inherited_events,0.1f,64);
++    check(near(inherited.get_component<transform_3d_component>(child).position.y,before_disabled.y+0.1f),
++        "removing inherited physics.disabled resumes kinematic movement");
+ 
+     camera_input_3d_component camera_controls;
+     transform_3d_component camera_transform;
+@@ -337,7 +379,11 @@
+     camera_input_system_3d(camera_context,&idle_input);
+     check(near(length(camera_world.get_component<velocity_3d_component>(camera_entity).linear),0),
+         "removing camera.input clears residual movement");
+-    std::printf("Physics V0 sample: %d checks, %d failures\n",checks,failures);
++    check(physics.trigger_enters>0 && physics.trigger_exits>0,"sample consumes trigger enter and exit events");
++    const auto world_tests=run_physics_world_tests();
++    checks+=world_tests.checks;
++    failures+=world_tests.failures;
++    std::printf("Physics World sample: %d checks, %d failures\n",checks,failures);
+     return failures==0 ? 0 : 1;
+ }
+ }
+--- a/samples/sample_2d_action/src/sample_3d_world_builder.hpp
++++ b/samples/sample_2d_action/src/sample_3d_world_builder.hpp
+@@ -14,6 +14,7 @@
+     rain::entity_id camera, cube, directional_light;
+     rain::entity_id ground, frozen_cube, floating_cube, kinematic_cube;
+     rain::entity_id sphere, trigger_platform;
++    rain::entity_id filtered_cube, filter_platform;
+ };
+ 
+ [[nodiscard]] sample_3d_world_handles build_sample_3d_world(
+--- a/samples/sample_2d_action/src/sample_3d_world_builder.cpp
++++ b/samples/sample_2d_action/src/sample_3d_world_builder.cpp
+@@ -1,10 +1,12 @@
+ #include "sample_3d_world_builder.hpp"
++#include "sample_physics_3d.hpp"
+ 
+ #include <rain/render/camera_3d.hpp>
+ #include <rain/render/directional_light_3d_component.hpp>
+ #include <rain/render/mesh_3d_component.hpp>
+ #include <rain/runtime/camera_input_3d_component.hpp>
+ #include <rain/runtime/collider_3d_component.hpp>
++#include <rain/runtime/collision_filter_3d_component.hpp>
+ #include <rain/runtime/rigid_body_3d_component.hpp>
+ #include <rain/runtime/transform_3d_component.hpp>
+ #include <rain/runtime/velocity_3d_component.hpp>
+@@ -32,6 +34,10 @@
+         .inverse_mass=std::string_view{mode} == "physics.dynamic" ? 1.0f : 0.0f,
+         .restitution=sphere ? 0.65f : 0.0f});
+     w.add_component<velocity_3d_component>(entity);
++    w.add_component<collision_filter_3d_component>(entity);
++    w.add_tag(entity,tag_id{"physics.collider"});
++    if (std::string_view{mode}!="physics.static")
++        w.add_component<physics_feedback_component>(entity,physics_feedback_component{.normal_tint=color});
+     for (const char* tag : {"transform.3d", "object.renderable", "render.3d",
+                             "render.frustum_cull", "object.movable"})
+         w.add_tag(entity, tag_id{tag});
+@@ -53,6 +59,7 @@
+ 
+     result.ground = create_body(w, resources, "physics.ground", {0,-0.5f,1}, {9,0.5f,6},
+         {0.26f,0.31f,0.38f,1}, "physics.static");
++    w.get_component<collision_filter_3d_component>(result.ground).layer=collision_layer_3d::world;
+     result.cube = create_body(w, resources, "physics.cube", {-4,4,0}, {0.65f,0.65f,0.65f},
+         {0.10f,0.52f,1,1}, "physics.dynamic");
+     result.frozen_cube = create_body(w, resources, "physics.frozen", {-1.5f,3,0}, {0.6f,0.6f,0.6f},
+@@ -65,8 +72,15 @@
+     result.trigger_platform = create_body(w, resources, "physics.trigger_platform", {4,2,-1}, {1.2f,0.12f,1.2f},
+         {0.9f,0.2f,0.32f,1}, "physics.static");
+     w.add_tag(result.trigger_platform, tag_id{"physics.trigger"});
++    w.get_component<collision_filter_3d_component>(result.trigger_platform).layer=collision_layer_3d::trigger;
+     result.sphere = create_body(w, resources, "physics.sphere", {4,5,-1}, {0.65f,0.65f,0.65f},
+         {1,0.4f,0.10f,1}, "physics.dynamic", true);
++
++    result.filter_platform = create_body(w,resources,"physics.filter_platform",{-6,2,2},{1.1f,0.12f,1.1f},
++        {0.1f,0.7f,0.75f,1},"physics.static");
++    w.get_component<collision_filter_3d_component>(result.filter_platform).layer=collision_layer_3d::enemy;
++    result.filtered_cube = create_body(w,resources,"physics.filtered_cube",{-6,5,2},{0.5f,0.5f,0.5f},
++        {0.9f,0.9f,0.95f,1},"physics.dynamic");
+ 
+     result.directional_light = w.create_entity({.name=string_id{"entity.sun"}});
+     w.add_component<directional_light_3d_component>(result.directional_light,
+@@ -87,12 +101,15 @@
+         w.get_component<velocity_3d_component>(e).linear={};
+         w.remove_tag(e, tag_id{"state.frozen"});
+         w.remove_tag(e, tag_id{"physics.no_gravity"});
++        w.remove_tag(e, tag_id{"physics.disabled"});
+     };
+     reset_body(h.cube, {-4,4,0});
+     reset_body(h.frozen_cube, {-1.5f,3,0});
+     reset_body(h.floating_cube, {1,3,2.5f});
+     reset_body(h.kinematic_cube, {-3,0.5f,3});
+     reset_body(h.sphere, {4,5,-1});
++    reset_body(h.filtered_cube, {-6,5,2});
++    w.get_component<collision_filter_3d_component>(h.filtered_cube).mask=collision_layer_3d::world;
+     w.add_tag(h.frozen_cube, tag_id{"state.frozen"});
+     w.add_tag(h.floating_cube, tag_id{"physics.no_gravity"});
+     w.get_component<velocity_3d_component>(h.kinematic_cube).linear={1.5f,0,0};
+--- /dev/null
++++ b/samples/sample_2d_action/src/sample_physics_world_tests.cpp
+@@ -0,0 +1,336 @@
++#include "sample_physics_3d.hpp"
++#include "sample_3d_world_builder.hpp"
++
++#include <rain/render/mesh_3d_component.hpp>
++#include <rain/runtime/collider_3d_component.hpp>
++#include <rain/runtime/collision_filter_3d_component.hpp>
++#include <rain/runtime/physics_broadphase_3d.hpp>
++#include <rain/runtime/physics_system_3d.hpp>
++#include <rain/runtime/rigid_body_3d_component.hpp>
++#include <rain/runtime/transform_3d_component.hpp>
++#include <rain/runtime/velocity_3d_component.hpp>
++
++#include <algorithm>
++#include <cmath>
++#include <cstdio>
++#include <limits>
++#include <set>
++#include <utility>
++#include <vector>
++
++namespace sample_3d {
++namespace {
++using namespace rain;
++
++entity_id body(world& w,vec3 position,bool dynamic=true,bool trigger=false) {
++    const auto e=w.create_entity();
++    w.add_component<transform_3d_component>(e,transform_3d_component{.position=position});
++    w.add_component<collider_3d_component>(e);
++    w.add_component<collision_filter_3d_component>(e);
++    w.add_component<rigid_body_3d_component>(e,rigid_body_3d_component{
++        .inverse_mass=dynamic ? 1.0f : 0.0f,.linear_damping=0});
++    w.add_component<velocity_3d_component>(e);
++    w.add_tag(e,tag_id{dynamic ? "physics.dynamic" : "physics.static"});
++    w.add_tag(e,tag_id{"physics.no_gravity"});
++    if (trigger) w.add_tag(e,tag_id{"physics.trigger"});
++    return e;
++}
++
++bool has_event(const physics_world_3d& simulation,collision_event_type_3d type,
++    entity_id a,entity_id b,bool trigger) {
++    for (const auto& e : simulation.events())
++        if (e.type==type && e.trigger==trigger &&
++            ((e.first==a && e.second==b) || (e.first==b && e.second==a))) return true;
++    return false;
++}
++
++struct tick_record {
++    system_phase phase;
++    system_tick_type type;
++    f32 dt,alpha;
++    u64 frame,tick;
++};
++void record_tick(system_context& context,void* user_data) {
++    static_cast<std::vector<tick_record>*>(user_data)->push_back({context.phase,context.tick_type,
++        context.delta_seconds,context.interpolation_alpha,context.frame_index,context.fixed_tick_index});
++}
++}
++
++physics_sample_test_result run_physics_world_tests() {
++    physics_sample_test_result result;
++    const auto check=[&](bool condition,const char* name) {
++        ++result.checks;
++        if (!condition) { ++result.failures; std::fprintf(stderr,"FAIL: %s\n",name); }
++    };
++    const auto near=[](f32 a,f32 b,f32 epsilon=0.0001f) { return std::abs(a-b)<=epsilon; };
++    const collision_filter_3d_component left{.layer=1,.mask=2},right{.layer=2,.mask=1};
++    check(collision_layer_3d::all==std::numeric_limits<u32>::max(),"all collision layers is a full-width bit mask");
++    check(collision_filters_match(left,right),"filters compare each mask to the other layer");
++    check(!collision_filters_match(left,{.layer=2,.mask=0}),"both collision masks must accept");
++    check(!collision_filters_match({.layer=0,.mask=collision_layer_3d::all},right),"zero layer is filtered out");
++
++    // An independent brute-force oracle validates sweep-and-prune candidates.
++    std::vector<broadphase_proxy_3d> proxies;
++    u32 seed=1234567;
++    const auto random_coordinate=[&]() {
++        seed=seed*1664525u+1013904223u;
++        return static_cast<f32>((seed>>8)%100u)*0.12f;
++    };
++    for (u32 i=0;i<80;++i) {
++        const vec3 p{random_coordinate(),random_coordinate(),random_coordinate()};
++        proxies.push_back({.entity={i,i%3},.bounds={p,p+vec3{2,2,2}},
++            .layer=1u<<(i%3),.mask=i%4==0 ? 1u : 7u,.dynamic=i%3==0,.trigger=i%11==0});
++    }
++    using pair_key=std::pair<u64,u64>;
++    const auto id=[](entity_id e) { return (static_cast<u64>(e.index)<<32)|e.generation; };
++    std::set<pair_key> expected;
++    for (usize i=0;i<proxies.size();++i) for (usize j=i+1;j<proxies.size();++j) {
++        const auto& a=proxies[i];const auto& b=proxies[j];
++        const bool overlap=a.bounds.minimum.x<=b.bounds.maximum.x && b.bounds.minimum.x<=a.bounds.maximum.x &&
++            a.bounds.minimum.y<=b.bounds.maximum.y && b.bounds.minimum.y<=a.bounds.maximum.y &&
++            a.bounds.minimum.z<=b.bounds.maximum.z && b.bounds.minimum.z<=a.bounds.maximum.z;
++        if (overlap && (a.dynamic || b.dynamic || a.trigger || b.trigger) &&
++            (a.mask & b.layer)!=0 && (b.mask & a.layer)!=0) expected.emplace(id(a.entity),id(b.entity));
++    }
++    physics_broadphase_3d broadphase;
++    for (const auto& proxy : proxies) broadphase.add(proxy);
++    broadphase.build_pairs();
++    std::set<pair_key> actual;
++    std::vector<pair_key> first_order;
++    for (const auto& p : broadphase.pairs()) {
++        actual.emplace(id(p.first),id(p.second));first_order.emplace_back(id(p.first),id(p.second));
++    }
++    check(!expected.empty() && actual==expected,"broadphase matches independent brute-force spatial/filter oracle");
++    check(broadphase.pair_count()==actual.size(),"broadphase contains no duplicate pairs");
++    broadphase.clear();
++    for (auto it=proxies.rbegin();it!=proxies.rend();++it) broadphase.add(*it);
++    broadphase.build_pairs();
++    std::vector<pair_key> second_order;
++    for (const auto& p : broadphase.pairs()) second_order.emplace_back(id(p.first),id(p.second));
++    check(first_order==second_order,"broadphase pair order is independent of insertion order");
++    broadphase.clear();
++    const broadphase_proxy_3d proxy{.entity={1,0},.bounds={{0,0,0},{1,1,1}},.dynamic=true};
++    broadphase.add(proxy);broadphase.add(proxy);
++    broadphase.add({.entity={2,0},.bounds={{1,0,0},{2,1,1}}});
++    broadphase.add({.entity={3,0},.bounds={{std::numeric_limits<f32>::quiet_NaN(),0,0},{2,1,1}}});
++    broadphase.add({.entity={},.bounds={{0,0,0},{1,1,1}}});
++    broadphase.build_pairs();
++    check(broadphase.proxy_count()==2 && broadphase.pair_count()==1,
++        "broadphase deduplicates entities, rejects invalid proxies, and includes touching AABBs");
++    broadphase.add({.entity={2,0},.bounds={{4,0,0},{5,1,1}}});
++    broadphase.build_pairs();
++    check(broadphase.proxy_count()==2 && broadphase.pair_count()==0,"updating an existing proxy after sorting replaces its old bounds");
++    broadphase.add({.entity={1,0},.bounds={{1,0,0},{0,1,1}}});
++    broadphase.add({.entity={2,0},.bounds={{0,0,0},{1,1,1}}});
++    broadphase.add({.entity={3,0},.bounds={{0,0,0},{1,1,1}},.dynamic=true});
++    broadphase.build_pairs();
++    check(broadphase.proxy_count()==2 && broadphase.pair_count()==1,"invalid replacement removes the proxy without corrupting other entity indices");
++    broadphase.clear();
++    check(broadphase.proxy_count()==0 && broadphase.pair_count()==0,"broadphase clear removes old frame state");
++
++    world w;
++    physics_world_3d simulation;
++    const auto wall=body(w,{0,0,0},false);
++    const auto cube=body(w,{0.75f,0,0});
++    simulation.step(w,1.0f/120,10);
++    check(simulation.events().size()==1 && has_event(simulation,collision_event_type_3d::enter,wall,cube,false),
++        "solid contact emits enter once despite solver iterations");
++    check(!simulation.events().empty() && simulation.events().front().fixed_tick_index==10,"collision events carry fixed tick index");
++    check(near(w.get_component<transform_3d_component>(cube).position.x,1),"world resolves solid penetration");
++    simulation.step(w,1.0f/120,11);
++    check(simulation.events().size()==2 && has_event(simulation,collision_event_type_3d::stay,wall,cube,false),
++        "resting exact-touch contact stays and events accumulate until consumed");
++    if (!simulation.events().empty()) {
++        const auto& event=simulation.events().back();
++        check(event.first==wall && event.second==cube && event.normal.x< -0.9f,
++            "event IDs are canonical and normal points from second to first");
++    }
++    simulation.clear_events();
++    check(simulation.events().empty(),"clear_events only clears the delivery queue");
++    w.get_component<transform_3d_component>(cube).position.x=3;
++    simulation.step(w,1.0f/120,12);
++    check(simulation.events().size()==1 && has_event(simulation,collision_event_type_3d::exit,wall,cube,false),
++        "separation emits a single exit");
++    simulation.clear_events();simulation.step(w,1.0f/120,13);
++    check(simulation.events().empty(),"separated pairs do not repeat exit events");
++    check(simulation.stats().collider_count==2 && simulation.stats().broadphase_pair_count==0 &&
++        simulation.stats().narrowphase_test_count==0,"stats reset each step and omit separated narrowphase work");
++
++    world sensors;
++    physics_world_3d sensor_simulation;
++    const auto sensor=body(sensors,{0,0,0},false,true);
++    const auto visitor=body(sensors,{0.75f,0,0});
++    sensor_simulation.step(sensors,1.0f/120,0);
++    check(has_event(sensor_simulation,collision_event_type_3d::enter,sensor,visitor,true) &&
++        near(sensors.get_component<transform_3d_component>(visitor).position.x,0.75f),
++        "trigger detects overlap without applying a contact impulse or correction");
++    sensor_simulation.clear_events();
++    sensors.remove_tag(sensor,tag_id{"physics.trigger"});
++    sensor_simulation.step(sensors,1.0f/120,1);
++    check(sensor_simulation.events().size()==2 &&
++        has_event(sensor_simulation,collision_event_type_3d::exit,sensor,visitor,true) &&
++        has_event(sensor_simulation,collision_event_type_3d::enter,sensor,visitor,false),
++        "trigger to solid transition exits old contact type and enters the new type");
++    sensors.add_tag(sensor,tag_id{"physics.trigger"});sensor_simulation.clear_events();
++    sensor_simulation.step(sensors,1.0f/120,2);
++    check(has_event(sensor_simulation,collision_event_type_3d::exit,sensor,visitor,false) &&
++        has_event(sensor_simulation,collision_event_type_3d::enter,sensor,visitor,true),
++        "solid to trigger transition has a balanced lifecycle");
++    sensor_simulation.clear_events();
++    sensors.get_component<collision_filter_3d_component>(visitor).mask=0;
++    sensor_simulation.step(sensors,1.0f/120,3);
++    check(has_event(sensor_simulation,collision_event_type_3d::exit,sensor,visitor,true),
++        "changing collision mask exits an active pair");
++    sensors.get_component<collision_filter_3d_component>(visitor).mask=collision_layer_3d::all;
++    sensor_simulation.clear_events();sensor_simulation.step(sensors,1.0f/120,4);
++    check(has_event(sensor_simulation,collision_event_type_3d::enter,sensor,visitor,true),
++        "restoring collision mask re-enters pair");
++    const auto parent=sensors.create_entity();sensors.set_parent(visitor,parent);
++    sensors.add_tag(parent,tag_id{"physics.disabled"});
++    sensors.get_component<velocity_3d_component>(visitor).linear={1,0,0};
++    const auto stopped=sensors.get_component<transform_3d_component>(visitor).position;
++    sensor_simulation.clear_events();sensor_simulation.step(sensors,1.0f/120,5);
++    check(has_event(sensor_simulation,collision_event_type_3d::exit,sensor,visitor,true) &&
++        near(sensors.get_component<transform_3d_component>(visitor).position.x,stopped.x),
++        "inherited physics.disabled stops integration and exits contacts");
++    sensors.remove_tag(parent,tag_id{"physics.disabled"});
++    sensors.get_component<velocity_3d_component>(visitor).linear={};
++    sensor_simulation.clear_events();sensor_simulation.step(sensors,1.0f/120,6);
++    check(has_event(sensor_simulation,collision_event_type_3d::enter,sensor,visitor,true),
++        "removing disabled tag restores contact detection");
++    sensors.set_entity_active(visitor,false);
++    sensor_simulation.clear_events();sensor_simulation.step(sensors,1.0f/120,7);
++    check(has_event(sensor_simulation,collision_event_type_3d::exit,sensor,visitor,true),
++        "inactive entities exit contact tracking");
++    sensors.set_entity_active(visitor,true);
++    sensor_simulation.clear_events();sensor_simulation.step(sensors,1.0f/120,8);
++    sensors.destroy_entity(visitor);
++    const auto replacement=body(sensors,{0.75f,0,0});
++    sensor_simulation.clear_events();sensor_simulation.step(sensors,1.0f/120,9);
++    check(replacement.index==visitor.index && replacement.generation!=visitor.generation,
++        "event lifecycle test recycles an entity index with a new generation");
++    check(has_event(sensor_simulation,collision_event_type_3d::exit,sensor,visitor,true) &&
++        has_event(sensor_simulation,collision_event_type_3d::enter,sensor,replacement,true),
++        "destroyed entity exits without aliasing a recycled entity contact");
++    sensors.remove_component<collider_3d_component>(replacement);
++    sensor_simulation.clear_events();sensor_simulation.step(sensors,1.0f/120,10);
++    check(has_event(sensor_simulation,collision_event_type_3d::exit,sensor,replacement,true),
++        "removing collider exits the pair");
++    sensors.add_component<collider_3d_component>(replacement);
++    sensor_simulation.reset();sensor_simulation.step(sensors,1.0f/120,11);
++    check(sensor_simulation.events().size()==1 && has_event(sensor_simulation,collision_event_type_3d::enter,sensor,replacement,true),
++        "reset clears persistent contacts and starts with enter");
++    sensor_simulation.clear_events();
++    sensor_simulation.step(sensors,0,12);
++    sensor_simulation.step(sensors,-1,12);
++    sensor_simulation.step(sensors,std::numeric_limits<f32>::quiet_NaN(),12);
++    check(sensor_simulation.events().empty(),"invalid world step does not emit lifecycle changes");
++    sensor_simulation.step(sensors,1.0f/120,12);
++    check(has_event(sensor_simulation,collision_event_type_3d::stay,sensor,replacement,true),
++        "invalid steps preserve active contact cache");
++
++    world static_sensors;
++    physics_world_3d static_simulation;
++    const auto static_sensor=body(static_sensors,{0,0,0},false,true);
++    const auto static_target=body(static_sensors,{0.5f,0,0},false);
++    static_simulation.step(static_sensors,1.0f/120,0);
++    check(has_event(static_simulation,collision_event_type_3d::enter,static_sensor,static_target,true),
++        "static triggers can observe static overlaps");
++    world unsolved;
++    physics_world_3d detect_only(physics_settings_3d{.solver_iterations=0});
++    const auto detect_wall=body(unsolved,{0,0,0},false);
++    const auto detect_cube=body(unsolved,{0.75f,0,0});
++    detect_only.step(unsolved,1.0f/120,0);
++    check(has_event(detect_only,collision_event_type_3d::enter,detect_wall,detect_cube,false) &&
++        near(unsolved.get_component<transform_3d_component>(detect_cube).position.x,0.75f),
++        "zero solver iterations still detects contacts without position response");
++    world sparse;
++    physics_world_3d sparse_simulation;
++    for (u32 i=0;i<128;++i) body(sparse,{static_cast<f32>(i)*4,0,0});
++    sparse_simulation.step(sparse,1.0f/120,0);
++    check(sparse_simulation.stats().collider_count==128 && sparse_simulation.stats().broadphase_pair_count==0 &&
++        sparse_simulation.stats().narrowphase_test_count==0,"128 separated colliders avoid all-pairs narrowphase tests");
++
++    // Verify the production frame runner, not a second sample-only accumulator.
++    system_scheduler scheduler;
++    std::vector<tick_record> ticks;
++    for (auto phase : {system_phase::input,system_phase::movement,system_phase::physics,
++                       system_phase::post_physics,system_phase::post_update,system_phase::render_prepare})
++        scheduler.add_system({.system_name=to_string(phase),.owner_name="sample.test",
++            .phase=phase,.entity_query={},.function=record_tick,.user_data=&ticks});
++    world frame_world;event_system events;
++    fixed_step_settings settings;fixed_step_state state;
++    scheduler.run_frame(frame_world,events,1.0f/60,7,settings,state);
++    check(ticks.size()==8 && state.tick_index==2,"frame runner executes two physics steps per 60 Hz frame at 120 Hz");
++    if (ticks.size()==8) {
++        check(ticks[2].type==system_tick_type::fixed && ticks[2].tick==0 && ticks[2].frame==7 &&
++            near(ticks[2].dt,settings.delta_seconds) && ticks[4].tick==1,
++            "fixed phases receive fixed delta, tick type, frame index and monotonically increasing tick");
++        check(ticks[3].phase==system_phase::post_physics && ticks[5].phase==system_phase::post_physics &&
++            ticks[6].phase==system_phase::post_update && ticks[7].phase==system_phase::render_prepare,
++            "post_physics runs per substep before hierarchy and render preparation");
++    }
++    ticks.clear();scheduler.run_frame(frame_world,events,1.0f/240,8,settings,state);
++    check(ticks.size()==4 && near(state.interpolation_alpha,0.5f) && near(ticks.back().alpha,0.5f),
++        "sub-frame remainder reaches post-update interpolation without a physics step");
++    ticks.clear();
++    scheduler.run_phase(system_phase::physics,frame_world,events,system_run_info{
++        .delta_seconds=0.02f,.interpolation_alpha=0.25f,.frame_index=40,.fixed_tick_index=99,.tick_type=system_tick_type::fixed});
++    check(ticks.size()==1 && ticks[0].tick==99 && ticks[0].frame==40 && near(ticks[0].dt,0.02f) && near(ticks[0].alpha,0.25f),
++        "run_phase forwards all system_run_info fields");
++
++    ticks.clear();
++    fixed_step_state limited_state;
++    auto limited=settings;limited.max_substeps=2;
++    scheduler.run_frame(frame_world,events,0.25f,9,limited,limited_state);
++    check(limited_state.tick_index==2 && limited_state.interpolation_alpha>=0 && limited_state.interpolation_alpha<1,
++        "substep cap bounds catch-up work and keeps interpolation below one");
++    ticks.clear();
++    scheduler.run_frame(frame_world,events,0,10,limited,limited_state);
++    check(limited_state.tick_index==2,"excess whole steps are discarded after the substep cap");
++    fixed_step_state invalid_state;
++    ticks.clear();scheduler.run_frame(frame_world,events,std::numeric_limits<f32>::quiet_NaN(),11,settings,invalid_state);
++    check(invalid_state.tick_index==0 && ticks.size()==4 && near(ticks.front().dt,0),
++        "invalid frame delta is sanitized without stepping physics");
++    auto paused=settings;paused.max_substeps=0;
++    ticks.clear();scheduler.run_frame(frame_world,events,1.0f/60,12,paused,invalid_state);
++    check(invalid_state.tick_index==0 && ticks.size()==4,"zero substep budget leaves variable phases running");
++
++    world demo;event_system demo_events;system_scheduler demo_scheduler;physics_demo_systems demo_physics;
++    const auto handles=build_sample_3d_world(demo,{});
++    register_sample_3d_systems(demo_scheduler,demo_physics,nullptr);
++    for (u64 frame=0;frame<240;++frame) demo_physics.run_test_frame(demo_scheduler,demo,demo_events,1.0f/60,frame);
++    check(near(demo.get_component<transform_3d_component>(handles.filtered_cube).position.y,0.5f,0.003f),
++        "sample filtered cube crosses excluded platform and lands on world layer");
++    auto& filter=demo.get_component<collision_filter_3d_component>(handles.filtered_cube);
++    filter.mask|=collision_layer_3d::enemy;
++    demo.get_component<transform_3d_component>(handles.filtered_cube).position={-6,5,2};
++    demo.get_component<velocity_3d_component>(handles.filtered_cube).linear={};
++    for (u64 frame=240;frame<480;++frame) demo_physics.run_test_frame(demo_scheduler,demo,demo_events,1.0f/60,frame);
++    check(near(demo.get_component<transform_3d_component>(handles.filtered_cube).position.y,2.62f,0.003f),
++        "sample mask toggle enables platform collision");
++    demo.get_component<transform_3d_component>(handles.sphere).position={4,2,-1};
++    demo.get_component<velocity_3d_component>(handles.sphere).linear={};
++    demo_physics.run_test_frame(demo_scheduler,demo,demo_events,1.0f/120,480);
++    check(demo.has_tag(handles.sphere,tag_id{"state.in_trigger"}) &&
++        near(demo.get_component<mesh_3d_component>(handles.sphere).tint.y,1),
++        "sample trigger event adds state.in_trigger and changes render tint");
++    const auto sensor2=body(demo,{4,2,-1},false,true);
++    demo_physics.run_test_frame(demo_scheduler,demo,demo_events,1.0f/120,481);
++    check(demo.tag_count(handles.sphere,tag_id{"state.in_trigger"})==2,"overlapping triggers own separate tag references");
++    demo.destroy_entity(sensor2);
++    demo_physics.run_test_frame(demo_scheduler,demo,demo_events,1.0f/120,482);
++    check(demo.tag_count(handles.sphere,tag_id{"state.in_trigger"})==1,
++        "destroying one sensor retains the other sensor's tag reference");
++    demo_physics.reset(demo);
++    reset_sample_3d_world(demo,handles);
++    check(!demo.has_tag(handles.sphere,tag_id{"state.in_trigger"}) &&
++        near(demo.get_component<mesh_3d_component>(handles.sphere).tint.y,0.4f),
++        "scene reset clears event-owned tags, restores tint and resets world cache");
++    check(demo_physics.simulation.events().empty() && demo_physics.simulation.stats().collider_count==0,
++        "sample reset clears physics statistics and pending events");
++
++    std::printf("Physics World/Broadphase/events: %d checks, %d failures\n",result.checks,result.failures);
++    return result;
++}
++}

@@ -27,6 +27,7 @@ namespace rain
             if ((target==movement_target_3d::kinematic && !kinematic) ||
                 (target==movement_target_3d::non_kinematic && kinematic)) continue;
             if (target_world.has_tag_in_hierarchy(entity, tag_id{"state.frozen"}) ||
+                (kinematic && target_world.has_tag_in_hierarchy(entity, tag_id{"physics.disabled"})) ||
                 target_world.has_tag_in_hierarchy(entity, tag_id{"physics.static"}) ||
                 (!kinematic && target_world.has_tag_in_hierarchy(entity, tag_id{"physics.dynamic"})) ||
                 target_world.has_component<local_matrix_3d_component>(entity))
