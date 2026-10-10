@@ -5,6 +5,9 @@ target_sources(sample_2d_action
         src/main.cpp
         src/sample_physics_3d.cpp
         src/sample_physics_world_tests.cpp
+        src/sample_spatial_query.cpp
+        src/sample_spatial_query.hpp
+        src/sample_spatial_query_tests.cpp
         src/sample_physics_3d.hpp
         src/sample_2d_world_builder.cpp
         src/sample_2d_world_builder.hpp
@@ -26,6 +29,11 @@ target_compile_features(sample_2d_action
 rain_apply_common_options(sample_2d_action)
 rain_set_project_warnings(sample_2d_action)
 if(rain_build_tests)
+    add_test(NAME rain_spatial_query_regressions COMMAND sample_2d_action --spatial-test)
+    set_tests_properties(rain_spatial_query_regressions PROPERTIES
+        TIMEOUT 30
+        LABELS "physics;spatial_query;picking;sample"
+    )
     add_test(NAME rain_physics_v0_regressions COMMAND sample_2d_action --physics-test)
     set_tests_properties(rain_physics_v0_regressions PROPERTIES
         TIMEOUT 30

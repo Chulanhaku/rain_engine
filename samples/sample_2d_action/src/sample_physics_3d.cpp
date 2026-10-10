@@ -124,6 +124,9 @@ void register_sample_3d_systems(system_scheduler& scheduler,
     scheduler.add_system({.system_name="sample.physics_events", .owner_name="sample_2d_action",
         .phase=system_phase::post_physics, .entity_query={},
         .function=physics_demo_systems::consume_events, .user_data=&physics});
+    scheduler.add_system({.system_name="system.physics_query_sync_3d", .owner_name="sample_2d_action",
+        .phase=system_phase::post_update, .priority=75, .entity_query={},
+        .function=physics_query_sync_system_3d, .user_data=&physics.simulation});
     entity_query_desc hierarchy;
     hierarchy.required_components={get_type_id<transform_3d_component>()};
     hierarchy.required_tags.require_all(tag_id{"transform.3d"}).reject(tag_id{"transform.disabled"});

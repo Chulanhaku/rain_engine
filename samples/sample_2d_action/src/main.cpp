@@ -1,6 +1,7 @@
 #include "sample_2d_world_builder.hpp"
 #include "sample_3d_world_builder.hpp"
 #include "sample_physics_3d.hpp"
+#include "sample_spatial_query.hpp"
 
 #include <rain/app/application.hpp>
 #include <rain/core/log.hpp>
@@ -61,7 +62,12 @@ void sample_bounce_system(system_context& context, void*) {
 
 class sample_layer final : public layer {
 public:
-    explicit sample_layer(u64 frame_limit) : frame_limit_(frame_limit) {}
+    explicit sample_layer(u64 frame_limit,bool query_smoke=false) : frame_limit_(frame_limit) {
+        queries_.smoke_mode=query_smoke;
+    }
+    [[nodiscard]] bool query_smoke_passed() const {
+        return queries_.query_count>=180 && queries_.smoke_modes_hit==7;
+    }
 
     void on_attach(application_context& context) override {
         bind_input_actions(*context.input);
@@ -73,6 +79,15 @@ public:
         renderer_3d_=std::make_unique<render_system_3d>(
             *context.renderer, *context.meshes_3d, *context.materials_3d);
         handles_3d_=sample_3d::build_sample_3d_world(w, {cube_mesh_,cube_material_,sphere_mesh_});
+        queries_.physics=&physics_.simulation;
+        queries_.window=context.main_window;queries_.renderer=context.renderer;queries_.input=context.input;
+        queries_.camera=handles_3d_.camera;queries_.smoke_target=handles_3d_.frozen_cube;
+        query_material_=context.materials_3d->create(material_3d_desc{
+            .name="query.preview", .roughness_factor=0.85f, .blend_mode=render_blend_mode::alpha});
+        queries_.initialize(w,{cube_mesh_,query_material_,sphere_mesh_});
+        context.scheduler->add_system({.system_name="sample.mouse_picking_and_sweep", .owner_name="sample_2d_action",
+            .phase=system_phase::post_update, .priority=50, .entity_query={},
+            .function=sample_3d::spatial_query_demo::run, .user_data=&queries_});
         physics_.log_events=true;
         sample_3d::register_sample_3d_systems(*context.scheduler, physics_, context.input);
         context.scheduler->add_system({.system_name="system.render_prepare_3d", .owner_name="sample_2d_action",
@@ -103,6 +118,8 @@ public:
         log_info("Physics World: blue=dynamic, yellow=frozen, purple=no gravity, green=kinematic.");
         log_info("Orange sphere turns cyan with state.in_trigger while crossing the red trigger; enter/exit events are logged.");
         log_info("White cube ignores the cyan platform by collision mask, but lands on the ground. L toggles platform collisions.");
+        log_info("Front cubes: copper=high friction, ice-blue=low friction; identical speed 3, zero damping. C replays the slide comparison.");
+        log_info("Mouse: left click selects (yellow); 1 ray / 2 sphere sweep / 3 box sweep; I toggles trigger queries. White point=hit, orange=normal.");
         log_info("WASD move; Q/E down/up; arrows look; Shift boost; Esc quit.");
         log_info("Space launch blue; F freeze blue; V release/freeze yellow; G purple gravity; T platform solidity.");
         log_info("P toggle blue physics.disabled; R reset scene + camera; Tab show/hide 2D; H hide/show green 2D rectangle; B freeze 2D movement.");
@@ -118,7 +135,10 @@ public:
         if (input.is_pressed(string_id{"demo.reset"})) {
             sample_3d::reset_sample_3d_world(w,handles_3d_);
             physics_.reset(w);
+            queries_.reset(w);
         }
+        if (input.is_pressed(string_id{"demo.friction"}))
+            sample_3d::restart_friction_demo(w,handles_3d_);
         if (input.is_pressed(string_id{"demo.launch"})) {
             w.remove_tag(handles_3d_.cube,tag_id{"state.frozen"});
             w.get_component<velocity_3d_component>(handles_3d_.cube).linear.y=7;
@@ -162,10 +182,20 @@ public:
             ", contacts="+std::to_string(stats.collision_count)+
             ", trigger enter/stay/exit="+std::to_string(physics_.trigger_enters)+"/"+
             std::to_string(physics_.trigger_stays)+"/"+std::to_string(physics_.trigger_exits));
+        log_info("Friction comparison: rough x="+
+            std::to_string(w.get_component<transform_3d_component>(handles_3d_.rough_cube).position.x)+
+            ", vx="+std::to_string(w.get_component<velocity_3d_component>(handles_3d_.rough_cube).linear.x)+
+            "; slippery x="+std::to_string(w.get_component<transform_3d_component>(handles_3d_.slippery_cube).position.x)+
+            ", vx="+std::to_string(w.get_component<velocity_3d_component>(handles_3d_.slippery_cube).linear.x));
+        log_info("Spatial queries="+std::to_string(queries_.query_count)+", snapshot colliders="+
+            std::to_string(physics_.simulation.queries().collider_count())+
+            ", smoke modes hit="+std::to_string(queries_.smoke_modes_hit));
+        queries_.reset(*context.target_world);
         renderer_2d_.reset();
         renderer_3d_.reset();
         context.materials->destroy(solid_material_);
         context.materials->destroy(image_material_);
+        context.materials_3d->destroy(query_material_);
         context.materials_3d->destroy(cube_material_);
         context.meshes_3d->destroy(cube_mesh_);
         context.meshes_3d->destroy(sphere_mesh_);
@@ -190,6 +220,10 @@ private:
         input.bind_axis(string_id{"camera.look_y"},key_code::up,-1);
         input.bind_axis(string_id{"camera.look_y"},key_code::down,1);
         input.bind_button(string_id{"camera.boost"},key_code::left_shift);
+        input.bind_button(string_id{"query.ray"},key_code::key_1);
+        input.bind_button(string_id{"query.sphere"},key_code::key_2);
+        input.bind_button(string_id{"query.box"},key_code::key_3);
+        input.bind_button(string_id{"query.triggers"},key_code::i);
         input.bind_button(string_id{"app.quit"},key_code::escape);
         input.bind_button(string_id{"demo.launch"},key_code::space);
         input.bind_button(string_id{"demo.freeze"},key_code::f);
@@ -197,6 +231,7 @@ private:
         input.bind_button(string_id{"demo.gravity"},key_code::g);
         input.bind_button(string_id{"demo.trigger"},key_code::t);
         input.bind_button(string_id{"demo.reset"},key_code::r);
+        input.bind_button(string_id{"demo.friction"},key_code::c);
         input.bind_button(string_id{"demo.disabled"},key_code::p);
         input.bind_button(string_id{"demo.filter"},key_code::l);
         input.bind_button(string_id{"demo.overlay"},key_code::tab);
@@ -205,12 +240,13 @@ private:
     }
 
     sample_3d::physics_demo_systems physics_;
+    sample_3d::spatial_query_demo queries_;
     sample_3d::sample_3d_world_handles handles_3d_;
     sample_2d::sample_2d_world_handles handles_2d_;
     std::unique_ptr<render_system_3d> renderer_3d_;
     std::unique_ptr<render_system_2d> renderer_2d_;
     mesh_3d_handle cube_mesh_,sphere_mesh_;
-    material_3d_handle cube_material_;
+    material_3d_handle cube_material_,query_material_;
     material_2d_handle solid_material_,image_material_;
     camera_2d camera_2d_;
     u64 frame_limit_=0;
@@ -221,10 +257,13 @@ private:
 int main(int argc,char** argv) {
     if (argc==2 && std::string_view{argv[1]}=="--physics-test")
         return sample_3d::run_physics_sample_tests();
-    rain::u64 frame_limit=0;
-    if (argc!=1) {
+    if (argc==2 && std::string_view{argv[1]}=="--spatial-test")
+        return sample_3d::run_spatial_query_tests();
+    const bool query_smoke=argc==2 && std::string_view{argv[1]}=="--query-smoke";
+    rain::u64 frame_limit=query_smoke ? 180 : 0;
+    if (argc!=1 && !query_smoke) {
         if (argc!=3 || std::string_view{argv[1]}!="--frames") {
-            std::fprintf(stderr,"Usage: sample_2d_action [--physics-test | --frames N]\n");
+            std::fprintf(stderr,"Usage: sample_2d_action [--physics-test | --spatial-test | --query-smoke | --frames N]\n");
             return 2;
         }
         const std::string_view number{argv[2]};
@@ -234,9 +273,16 @@ int main(int argc,char** argv) {
             return 2;
         }
     }
-    rain::application app({.title="Rain Engine - Physics World | WASD + arrows | Space F V G T P L | R reset | Tab 2D",
+    rain::application app({.title="Rain Engine - Spatial Query | Click select | 1 Ray 2 Sphere 3 Box | I triggers | WASD + arrows | R reset",
         .width=1280, .height=720, .resizable=true,
         .clear_color={.r=0.06f,.g=0.08f,.b=0.13f,.a=1}});
-    app.push_layer(std::make_unique<sample_layer>(frame_limit));
-    return app.run();
+    auto sample=std::make_unique<sample_layer>(frame_limit,query_smoke);
+    auto* sample_result=sample.get();
+    app.push_layer(std::move(sample));
+    const int result=app.run();
+    if (query_smoke && !sample_result->query_smoke_passed()) {
+        std::fprintf(stderr,"Spatial graphical smoke failed to hit target in all three modes\n");
+        return 1;
+    }
+    return result;
 }

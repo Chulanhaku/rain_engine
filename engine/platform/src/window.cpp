@@ -3,6 +3,7 @@
 #include<rain/core/assert.hpp>
 #include<rain/core/log.hpp>
 #include <sstream>
+#include <cmath>
 #include<GLFW/glfw3.h>
 
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -111,6 +112,20 @@ namespace rain{
         glfwGetCursorPos(handle_, &x, &y);
 
         return static_cast<f32>(y);
+    }
+
+    bool rain_window::mouse_position_normalized(vec2& position) const {
+        position={};
+        int width=0,height=0,pixel_width=0,pixel_height=0;
+        glfwGetWindowSize(handle_,&width,&height);
+        glfwGetFramebufferSize(handle_,&pixel_width,&pixel_height);
+        if (width<=0 || height<=0 || pixel_width<=0 || pixel_height<=0 ||
+            glfwGetWindowAttrib(handle_,GLFW_FOCUSED)!=GLFW_TRUE) return false;
+        double x=0,y=0;
+        glfwGetCursorPos(handle_,&x,&y);
+        if (!std::isfinite(x) || !std::isfinite(y) || x<0 || y<0 || x>=width || y>=height) return false;
+        position={static_cast<f32>(x/width),static_cast<f32>(y/height)};
+        return true;
     }
 
     u32 rain_window::width()const {

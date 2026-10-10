@@ -1,0 +1,2233 @@
+# Spatial Query + Raycast + Mouse Picking + Sphere/Box Sweep V0
+日期：2026-10-10
+
+## 代码变更汇总
+
+本批把物理世界扩展为统一空间服务。保留任务开始前已有的摩擦代码、测试、项目介绍和 Obsidian 工作区变更；以下 diff 以本任务开始时的文件内容为基线，不重复归档前批修改。
+
+### 1. 修改文件列表
+
+- [新增] engine/runtime/include/rain/runtime/spatial_query_3d.hpp
+- [新增] engine/runtime/src/spatial_query_3d.cpp
+- [新增] engine/runtime/src/physics_geometry_3d.hpp
+- [修改] engine/runtime/include/rain/runtime/physics_world_3d.hpp
+- [修改] engine/runtime/src/physics_world_3d.cpp
+- [修改] engine/runtime/include/rain/runtime/physics_system_3d.hpp
+- [修改] engine/runtime/src/physics_system_3d.cpp
+- [修改] engine/runtime/CMakeLists.txt
+- [修改] engine/render/include/rain/render/camera_3d.hpp
+- [修改] engine/render/src/render_system_3d.cpp
+- [新增] engine/render/include/rain/render/picking_3d.hpp
+- [新增] engine/render/src/picking_3d.cpp
+- [修改] engine/render/CMakeLists.txt
+- [修改] engine/platform/include/rain/platform/window.hpp
+- [修改] engine/platform/src/window.cpp
+- [新增] samples/sample_2d_action/src/sample_spatial_query.hpp
+- [新增] samples/sample_2d_action/src/sample_spatial_query.cpp
+- [新增] samples/sample_2d_action/src/sample_spatial_query_tests.cpp
+- [修改] samples/sample_2d_action/src/sample_physics_3d.cpp
+- [修改] samples/sample_2d_action/src/main.cpp
+- [修改] samples/sample_2d_action/CMakeLists.txt
+- [新增] docs/Spatial_Query_V0.md
+- [修改] README.md
+- [修改] PROJECT_GUIDE.md
+- [新增] docs/Spatial_Query_Raycast_Mouse_Picking_Sweep_V0.txt
+- 无删除文件。
+
+### 2. 逐文件变更说明
+
+#### engine/runtime/include/rain/runtime/spatial_query_3d.hpp
+- 类 / 函数 / 数据结构：spatial_query_3d、ray_3d、query_sphere_3d、query_box_3d、spatial_query_filter_3d、spatial_query_hit_3d
+- 改动内容：新增统一请求、过滤器、命中结果和查询快照 API；Raycast/Sweep 支持最近、任意、全部命中，Overlap 支持任意与全部命中。明确零距离、起始重叠、世界单位和输出覆盖语义。
+- 修改原因：让各系统共享空间服务和命中语义。
+- 影响范围：新增 API；既有调用不需迁移。
+
+#### engine/runtime/src/spatial_query_3d.cpp
+- 类 / 函数 / 数据结构：spatial_query_3d::sync/clear/build_node/cast、raycast*、sweep_*、overlap_*；rounded_box_cast/intersects_bounds
+- 改动内容：从 Collider 池构建独立快照和中位数 AABB 树；统一 layer/mask、trigger、完整实体 ID 与 Tag 过滤；用分段二次方程检测球盒边角，Box→Sphere 使用相对运动；处理初始重叠、无效输入、稳定排序和粗筛向外舍入。
+- 修改原因：查询不依赖逐次模拟，也避免简单扩大盒体导致角落误报和边界粗筛漏检。
+- 影响范围：只读查询不改 ECS、速度或碰撞事件；同步成本与快照时序需由调用方管理。
+
+#### engine/runtime/src/physics_geometry_3d.hpp
+- 类 / 函数 / 数据结构：detail::current_world_matrix/basis/make_world_aabb/make_world_sphere；world_aabb_3d/world_sphere_3d
+- 改动内容：将原 physics_world_3d.cpp 的变换、AABB 和球体转换抽成内部共享函数，保留父继承、local matrix override、负缩放、剪切下的保守球界限。
+- 修改原因：确保模拟与查询使用一致世界几何。
+- 影响范围：内部重构，不改变接触求解公式或公共 Collider 格式。
+
+#### engine/runtime/include/rain/runtime/physics_world_3d.hpp
+- 类 / 函数 / 数据结构：physics_world_3d::sync_queries/queries；queries_ 成员
+- 改动内容：物理世界持有 spatial_query_3d，并提供显式同步和 const 查询入口。
+- 修改原因：统一查询快照的所有权和对外访问路径。
+- 影响范围：旧 step/events/settings 接口保持；增加查询访问接口。
+
+#### engine/runtime/src/physics_world_3d.cpp
+- 类 / 函数 / 数据结构：physics_world_3d::step/reset/sync_queries/queries；原形状转换辅助函数
+- 改动内容：用共享几何函数替换文件内重复实现；step 在求解后同步快照，reset 同时清理快照；保留已有静/动摩擦及事件实现。
+- 修改原因：查询必须看到求解后的姿态，重置不能遗留旧实体命中。
+- 影响范围：每次有效物理步新增快照重建成本；既有物理 124 项回归保持通过。
+
+#### engine/runtime/include/rain/runtime/physics_system_3d.hpp
+- 类 / 函数 / 数据结构：physics_query_sync_system_3d 声明
+- 改动内容：增加变量帧查询同步系统声明，复用 physics_world_3d* user_data。
+- 修改原因：支持无固定步帧和编辑器式外部修改。
+- 影响范围：新增可选系统，不替换 physics_world_system_3d。
+
+#### engine/runtime/src/physics_system_3d.cpp
+- 类 / 函数 / 数据结构：physics_query_sync_system_3d
+- 改动内容：检查 world/user_data 后调用 sync_queries，不推进模拟。
+- 修改原因：将同步能力接入现有调度器。
+- 影响范围：注册方决定阶段和顺序。
+
+#### engine/runtime/CMakeLists.txt
+- 类 / 函数 / 数据结构：rain_runtime 的 target_sources
+- 改动内容：注册 spatial_query_3d.cpp、公共查询头和内部共享几何头。
+- 修改原因：让新的查询实现和公共接口进入正式模块构建。
+- 影响范围：不引入新三方依赖，不启用独立 physics 模块。
+
+#### engine/render/include/rain/render/camera_3d.hpp
+- 类 / 函数 / 数据结构：build_camera_frame_3d
+- 改动内容：新增渲染和拾取共用的相机帧构建函数，校验 FOV、裁剪面、aspect、退化方向基及非有限矩阵。
+- 修改原因：确保渲染与拾取使用相同正交化视图基，拒绝无效相机。
+- 影响范围：新增辅助 API；有效现有透视相机保持原行为。
+
+#### engine/render/src/render_system_3d.cpp
+- 类 / 函数 / 数据结构：render_system_3d::prepare；原内部 build_camera_frame
+- 改动内容：删除重复的内部相机构建逻辑，改为调用 build_camera_frame_3d。
+- 修改原因：避免显示与拾取发生相机约定漂移。
+- 影响范围：无效相机不提交；已有 3D 和 MSAA 回归通过。
+
+#### engine/render/include/rain/render/picking_3d.hpp
+- 类 / 函数 / 数据结构：screen_viewport_3d、screen_point_to_ray_3d
+- 改动内容：新增带视口偏移的屏幕射线 API，定义左上原点、像素单位及近面到远面的射线段。
+- 修改原因：为游戏和工具提供可复用的鼠标拾取射线转换。
+- 影响范围：新增接口，不将鼠标输入耦合到物理内核。
+
+#### engine/render/src/picking_3d.cpp
+- 类 / 函数 / 数据结构：screen_point_to_ray_3d
+- 改动内容：使用 double 高斯消元求逆并反投影 D3D [0,1] 深度，处理透视/正交矩阵、视口外坐标、零尺寸、奇异和非有限输入。
+- 修改原因：避免屏幕 Y 方向、偏移、裁剪和无效矩阵引发错误拾取。
+- 影响范围：返回 bool；失败清空 ray，调用方必须检查结果。
+
+#### engine/render/CMakeLists.txt
+- 类 / 函数 / 数据结构：rain_render 的 target_sources
+- 改动内容：注册 picking_3d.cpp 和 picking_3d.hpp。
+- 修改原因：让屏幕射线辅助函数链接到渲染模块。
+- 影响范围：使用既有 render→runtime 依赖，不增加库。
+
+#### engine/platform/include/rain/platform/window.hpp
+- 类 / 函数 / 数据结构：rain_window::mouse_position_normalized
+- 改动内容：新增输出 vec2 的归一化鼠标位置接口，声明失焦/视口外/最小化失败语义。
+- 修改原因：区分 GLFW 逻辑窗口坐标和帧缓冲像素。
+- 影响范围：原 mouse_x/mouse_y 接口保持。
+
+#### engine/platform/src/window.cpp
+- 类 / 函数 / 数据结构：rain_window::mouse_position_normalized
+- 改动内容：用 GLFW 实际逻辑尺寸归一化鼠标，并检查帧缓冲尺寸、焦点和客户区边界。
+- 修改原因：防止高 DPI 比例、失焦或最小化状态下误选中。
+- 影响范围：仅使用新接口的调用方受影响。
+
+#### samples/sample_2d_action/src/sample_spatial_query.hpp
+- 类 / 函数 / 数据结构：spatial_demo_mode、spatial_query_demo、run_spatial_query_tests
+- 改动内容：新增查询演示状态、选择与可视标记所有权、系统回调和可独立执行的 evaluate 接口；声明脚本烟测状态。
+- 修改原因：使交互演示与 headless 回归复用同一逻辑。
+- 影响范围：样例内部新增类型，不改变引擎对象格式。
+
+#### samples/sample_2d_action/src/sample_spatial_query.cpp
+- 类 / 函数 / 数据结构：spatial_query_demo::initialize/reset/evaluate/run/restore_tint/select；marker/segment/visibility
+- 改动内容：鼠标投影后调用统一 Raycast/Sweep；显示路径、半透明停止形状、命中点和法线；管理一个 state.selected Tag 并恢复物理反馈颜色；过滤隐藏父节点，清理失效选择；脚本模式轮换三类查询。
+- 修改原因：把服务变成可观察、可操作的样例，同时验证选择生命周期。
+- 影响范围：样例新增交互；可视标记没有 Collider，不影响模拟和空间索引。
+
+#### samples/sample_2d_action/src/sample_spatial_query_tests.cpp
+- 类 / 函数 / 数据结构：run_spatial_query_tests；ray_and_filter_tests、sweep_and_overlap_tests、snapshot_and_input_tests、transformed_geometry_tests、picking_tests、randomized_tests、oracle
+- 改动内容：新增 532 项检查，覆盖过滤、几何边角、零/长距离、非法输入、变换/剪切、快照与实体 generation、调度同步、投影和选择状态。400 组 Sweep 用独立连续距离最小化/二分算法比对，30 组混合场景比对 BVH。
+- 修改原因：给新服务提供独立于生产求交实现的几何参考和生命周期回归。
+- 影响范围：--spatial-test 不创建窗口；失败返回非零退出码。
+
+#### samples/sample_2d_action/src/sample_physics_3d.cpp
+- 类 / 函数 / 数据结构：register_sample_3d_systems
+- 改动内容：在 post_update priority 75 注册 system.physics_query_sync_3d，位于变换更新之后、拾取之前。
+- 修改原因：确保零子步帧、重置和外部变更也发布当前空间快照。
+- 影响范围：原物理系统注册保持；每个变量帧新增同步工作。
+
+#### samples/sample_2d_action/src/main.cpp
+- 类 / 函数 / 数据结构：sample_layer 构造/on_attach/on_update/on_detach/bind_input_actions/query_smoke_passed；main
+- 改动内容：创建透明预览材质和演示状态；注册拾取系统；添加 1/2/3、I 和鼠标选择说明；重置/退出清理演示状态与材质；添加 --spatial-test 和 --query-smoke CLI，烟测 180 帧且三模式必须命中。
+- 修改原因：提供可直接运行的演示和完整图形路径验证入口。
+- 影响范围：保留原相机、物理、摩擦、2D 覆盖层按键及 --frames/--physics-test。
+
+#### samples/sample_2d_action/CMakeLists.txt
+- 类 / 函数 / 数据结构：sample_2d_action 的 target_sources；rain_spatial_query_regressions
+- 改动内容：注册演示和测试文件，新增 --spatial-test CTest 用例、30 秒超时和 physics/spatial_query/picking/sample 标签。
+- 修改原因：使新回归进入既有构建与测试预设。
+- 影响范围：默认图形烟测不纳入 CTest；测试要求 rain_build_tests 和 samples 已启用。
+
+#### docs/Spatial_Query_V0.md
+- 类 / 函数 / 数据结构：无类/函数改动；新增接口使用与设计文档
+- 改动内容：记录查询 API、过滤矩阵、快照时序、命中字段、形状/精度限制、样例按键、构建和测试证据；单独列出后续优化建议。
+- 修改原因：供后续武器、AI、相机和技能系统按同一契约接入。
+- 影响范围：说明性文件，不参与构建。
+
+#### README.md
+- 类 / 函数 / 数据结构：无类/函数改动；项目入口与样例说明
+- 改动内容：增加空间查询指南链接，更新已实现能力和样例 CLI/按键。
+- 修改原因：根目录可发现新空间服务与验证入口。
+- 影响范围：仅文档导航改变，保留上一批项目定位说明。
+
+#### PROJECT_GUIDE.md
+- 类 / 函数 / 数据结构：无类/函数改动；能力表、方向 B、推进顺序和验证入口
+- 改动内容：将空间查询从待实现方向更新为已完成 V0；记录本批 532/124 项回归、4/4 CTest 和 180 帧烟测；后续建议改为查询消费者等可选小目标。
+- 修改原因：让其他对话读到准确当前进度，不重新从零实现同一服务。
+- 影响范围：保持原启发式设计定位，不锁定某个玩法示例。
+
+#### docs/Spatial_Query_Raycast_Mouse_Picking_Sweep_V0.txt
+- 类 / 函数 / 数据结构：无。
+- 改动内容：新增本批逐文件说明、行为变化、限制、验证结果和 task-only diff。
+- 修改原因：按项目交付规范留下可审阅记录。
+- 影响范围：不参与构建；diff 不包含本报告自身，避免递归。
+
+### 3. 行为变化
+
+- physics_world_3d 现在拥有空间查询快照，可复用 Raycast、Overlap、Sphere/Box Sweep 和过滤逻辑。查询只读，不自行推进模拟。
+- 物理 step 求解后与样例 post_update 都会同步查询；外部使用者修改世界后应显式同步。
+- 鼠标左键选中并高亮；1/2/3 切换查询形状；I 切换 trigger；预览显示路径、停止形状、命中点和法线。
+- 原摩擦、碰撞事件、相机、2D 覆盖层与 PBR 演示保留。共享相机构建新增退化基检查。
+
+### 4. 风险点
+
+- Box 为世界 AABB，旋转盒体仍使用保守近似；Sweep 只有平移，不包含旋转、Capsule、Convex、三角网格或目标运动。
+- Sweep 返回接触信息，不自动实现 CCD、滑动、相机避障或角色控制器；初始重叠结果不是 MTD。
+- 查询是显式快照，ECS 改动后未同步会读到旧状态；命中 ID 使用前应校验 generation/alive。
+- V0 每次 sync 重建 AABB 树并复制 Tag 数据；本批优先保证语义一致，未完成静态/动态分离、增量同步或性能基准。
+- 只读查询可并发，但不能与 sync/step/reset/clear 同时执行，输出 vector 也不能并发写。
+- 图形烟测证明完整路径运行和三模式命中，不代替人工检查高 DPI、多显示器切换和视觉效果。
+
+### 5. 建议验证方式
+
+已完成：
+- cmake --build --preset build_gcc_debug -j 8：全部目标成功；最后增量编译无新增告警。
+- ctest --preset test_gcc_debug --verbose：4/4 通过。
+- --spatial-test：532 checks, 0 failures。
+- --physics-test：124 checks, 0 failures。
+- --query-smoke：180 次查询；查询场景 11 个 Collider；三模式命中位集合 7；退出码 0，stderr 为空。
+- Markdown：33 个本地链接检查通过；代码围栏成对；git diff --check 通过；本轮新增行无行末空白。
+
+运行命令：
+cmake --preset gcc_debug
+cmake --build --preset build_gcc_debug -j 8
+ctest --preset test_gcc_debug --verbose
+.\build\gcc_debug\samples\sample_2d_action\sample_2d_action.exe --spatial-test
+.\build\gcc_debug\samples\sample_2d_action\sample_2d_action.exe --query-smoke
+
+人工建议：运行样例，点击方块/球体与空白，切换 1/2/3、I 和 P/R；检查角落擦碰、触发器过滤、取消选择后的颜色、窗口缩放和失焦行为。
+日志：build/spatial_query_20261010_ctest.log、build/spatial_query_20261010_smoke.log、build/spatial_query_20261010_smoke.err。
+
+建议另行小步推进：实际相机避障消费者，或 Collider DebugDraw/查询性能统计；按测量考虑静态/动态树与增量 refit，不在本批扩大到完整角色控制器。
+
+### 6. 本次任务 diff 归档
+
+下方只包含本任务对 24 个实现/配置/说明文件的新增与修改。PROJECT_GUIDE.md 虽在 Git 中仍未跟踪，本任务开始时已经存在，因此按本任务基线记录为修改。报告自身不包含在 diff 中。
+
+--- /dev/null
++++ b/engine/runtime/src/physics_geometry_3d.hpp
+@@ -0,0 +1,86 @@
++#pragma once
++
++// Shared V0 shape conversion for simulation and scene queries. Keep both paths
++// on the same current local transforms, conservative AABBs and scaled spheres.
++#include <rain/runtime/collider_3d_component.hpp>
++#include <rain/runtime/local_matrix_3d_component.hpp>
++#include <rain/runtime/transform_3d_component.hpp>
++#include <rain/runtime/world.hpp>
++#include <algorithm>
++#include <cmath>
++
++namespace rain::detail {
++        // Match transform_hierarchy_system_3d's explicit inherit-parent opt-in,
++        // and compute from current local transforms, not last frame's cache.
++        [[nodiscard]] inline mat4 current_world_matrix(const world& target_world, entity_id entity)
++        {
++            mat4 result = mat4::identity();
++            usize visited = 0;
++            while (target_world.is_alive(entity) && visited++ < target_world.entity_capacity())
++            {
++                const auto* transform = target_world.try_get_component<transform_3d_component>(entity);
++                if (transform == nullptr) break;
++                const auto* matrix_override = target_world.try_get_component<local_matrix_3d_component>(entity);
++                result = result * (matrix_override != nullptr ? matrix_override->matrix : transform->matrix());
++
++                if (!target_world.has_tag(entity, tag_id{"transform.inherit_parent"})) break;
++                const entity_id parent = target_world.parent_of(entity);
++                if (!target_world.is_entity_active(parent)) break;
++                entity = parent;
++            }
++            return result;
++        }
++
++        [[nodiscard]] inline vec3 basis(const mat4& matrix, u32 row)
++        {
++            return {matrix.values[row][0], matrix.values[row][1], matrix.values[row][2]};
++        }
++
++        struct world_aabb_3d
++        {
++            vec3 center{};
++            vec3 half_extents{};
++        };
++
++        [[nodiscard]] inline world_aabb_3d make_world_aabb(const mat4& matrix, const collider_3d_component& collider)
++        {
++            const vec3 half{
++                std::abs(collider.half_extents.x),
++                std::abs(collider.half_extents.y),
++                std::abs(collider.half_extents.z)
++            };
++            return {
++                .center = transform_point(collider.center, matrix),
++                .half_extents = {
++                    std::abs(matrix.values[0][0]) * half.x + std::abs(matrix.values[1][0]) * half.y + std::abs(matrix.values[2][0]) * half.z,
++                    std::abs(matrix.values[0][1]) * half.x + std::abs(matrix.values[1][1]) * half.y + std::abs(matrix.values[2][1]) * half.z,
++                    std::abs(matrix.values[0][2]) * half.x + std::abs(matrix.values[1][2]) * half.y + std::abs(matrix.values[2][2]) * half.z
++                }
++            };
++        }
++
++        struct world_sphere_3d
++        {
++            vec3 center{};
++            f32 radius = 0.0f;
++        };
++
++        [[nodiscard]] inline world_sphere_3d make_world_sphere(const mat4& matrix, const collider_3d_component& collider)
++        {
++            // Bound the largest eigenvalue of A*A^T. Unlike max_basis_scale,
++            // this stays conservative when parent nonuniform scale adds shear.
++            const vec3 x = basis(matrix, 0);
++            const vec3 y = basis(matrix, 1);
++            const vec3 z = basis(matrix, 2);
++            const f32 bound_squared = std::max({
++                dot(x, x) + std::abs(dot(x, y)) + std::abs(dot(x, z)),
++                dot(y, y) + std::abs(dot(y, x)) + std::abs(dot(y, z)),
++                dot(z, z) + std::abs(dot(z, x)) + std::abs(dot(z, y))
++            });
++            return {
++                .center = transform_point(collider.center, matrix),
++                .radius = std::abs(collider.radius) * std::sqrt(std::max(bound_squared, 0.0f))
++            };
++        }
++
++}
+--- a/engine/runtime/src/physics_world_3d.cpp
++++ b/engine/runtime/src/physics_world_3d.cpp
+@@ -1,4 +1,5 @@
+ #include <rain/runtime/physics_world_3d.hpp>
++#include "physics_geometry_3d.hpp"
+ 
+ #include <rain/runtime/collider_3d_component.hpp>
+ #include <rain/runtime/local_matrix_3d_component.hpp>
+@@ -15,33 +16,19 @@
+ {
+     namespace
+     {
++        using detail::current_world_matrix;
++        using detail::basis;
++        using detail::world_aabb_3d;
++        using detail::world_sphere_3d;
++        using detail::make_world_aabb;
++        using detail::make_world_sphere;
++
+         constexpr f32 contact_epsilon = 0.000001f;
+         constexpr f32 contact_tolerance = 0.00001f;
+ 
+         [[nodiscard]] bool has_physics_tag(const world& target_world, entity_id entity, const char* name)
+         {
+             return target_world.has_tag_in_hierarchy(entity, tag_id{name});
+-        }
+-
+-        // Match transform_hierarchy_system_3d's explicit inherit-parent opt-in,
+-        // and compute from current local transforms, not last frame's cache.
+-        [[nodiscard]] mat4 current_world_matrix(const world& target_world, entity_id entity)
+-        {
+-            mat4 result = mat4::identity();
+-            usize visited = 0;
+-            while (target_world.is_alive(entity) && visited++ < target_world.entity_capacity())
+-            {
+-                const auto* transform = target_world.try_get_component<transform_3d_component>(entity);
+-                if (transform == nullptr) break;
+-                const auto* matrix_override = target_world.try_get_component<local_matrix_3d_component>(entity);
+-                result = result * (matrix_override != nullptr ? matrix_override->matrix : transform->matrix());
+-
+-                if (!target_world.has_tag(entity, tag_id{"transform.inherit_parent"})) break;
+-                const entity_id parent = target_world.parent_of(entity);
+-                if (!target_world.is_entity_active(parent)) break;
+-                entity = parent;
+-            }
+-            return result;
+         }
+ 
+         [[nodiscard]] mat4 parent_world_matrix(const world& target_world, entity_id entity)
+@@ -53,11 +40,6 @@
+                 return current_world_matrix(target_world, parent);
+             }
+             return mat4::identity();
+-        }
+-
+-        [[nodiscard]] vec3 basis(const mat4& matrix, u32 row)
+-        {
+-            return {matrix.values[row][0], matrix.values[row][1], matrix.values[row][2]};
+         }
+ 
+         [[nodiscard]] f32 basis_determinant(const mat4& matrix)
+@@ -103,53 +85,6 @@
+             const f32 determinant = basis_determinant(parent_world_matrix(target_world, entity));
+             return std::isfinite(determinant) && std::abs(determinant) > contact_epsilon ?
+                 body->inverse_mass : 0.0f;
+-        }
+-
+-        struct world_aabb_3d
+-        {
+-            vec3 center{};
+-            vec3 half_extents{};
+-        };
+-
+-        [[nodiscard]] world_aabb_3d make_world_aabb(const mat4& matrix, const collider_3d_component& collider)
+-        {
+-            const vec3 half{
+-                std::abs(collider.half_extents.x),
+-                std::abs(collider.half_extents.y),
+-                std::abs(collider.half_extents.z)
+-            };
+-            return {
+-                .center = transform_point(collider.center, matrix),
+-                .half_extents = {
+-                    std::abs(matrix.values[0][0]) * half.x + std::abs(matrix.values[1][0]) * half.y + std::abs(matrix.values[2][0]) * half.z,
+-                    std::abs(matrix.values[0][1]) * half.x + std::abs(matrix.values[1][1]) * half.y + std::abs(matrix.values[2][1]) * half.z,
+-                    std::abs(matrix.values[0][2]) * half.x + std::abs(matrix.values[1][2]) * half.y + std::abs(matrix.values[2][2]) * half.z
+-                }
+-            };
+-        }
+-
+-        struct world_sphere_3d
+-        {
+-            vec3 center{};
+-            f32 radius = 0.0f;
+-        };
+-
+-        [[nodiscard]] world_sphere_3d make_world_sphere(const mat4& matrix, const collider_3d_component& collider)
+-        {
+-            // Bound the largest eigenvalue of A*A^T. Unlike max_basis_scale,
+-            // this stays conservative when parent nonuniform scale adds shear.
+-            const vec3 x = basis(matrix, 0);
+-            const vec3 y = basis(matrix, 1);
+-            const vec3 z = basis(matrix, 2);
+-            const f32 bound_squared = std::max({
+-                dot(x, x) + std::abs(dot(x, y)) + std::abs(dot(x, z)),
+-                dot(y, y) + std::abs(dot(y, x)) + std::abs(dot(y, z)),
+-                dot(z, z) + std::abs(dot(z, x)) + std::abs(dot(z, y))
+-            });
+-            return {
+-                .center = transform_point(collider.center, matrix),
+-                .radius = std::abs(collider.radius) * std::sqrt(std::max(bound_squared, 0.0f))
+-            };
+         }
+ 
+         struct collision_contact_3d
+@@ -471,10 +406,14 @@
+         build_broadphase(target_world);
+         solve_collisions(target_world);
+         finalize_collision_events(fixed_tick_index);
+-    }
++        sync_queries(target_world);
++    }
++    void physics_world_3d::sync_queries(const world& target_world) { queries_.sync(target_world); }
++    const spatial_query_3d& physics_world_3d::queries() const { return queries_; }
+     const std::vector<collision_event_3d>& physics_world_3d::events() const { return events_; }
+     void physics_world_3d::clear_events() { events_.clear(); }
+     void physics_world_3d::reset() {
++        queries_.clear();
+         broadphase_.clear();active_collisions_.clear();current_collisions_.clear();
+         active_pairs_.clear();current_pairs_.clear();events_.clear();stats_={};
+     }
+--- a/engine/runtime/include/rain/runtime/physics_world_3d.hpp
++++ b/engine/runtime/include/rain/runtime/physics_world_3d.hpp
+@@ -3,6 +3,7 @@
+ #include <rain/core/container/rain_hash_map.hpp>
+ #include <rain/runtime/entity.hpp>
+ #include <rain/runtime/physics_3d.hpp>
++#include <rain/runtime/spatial_query_3d.hpp>
+ #include <rain/runtime/physics_broadphase_3d.hpp>
+ #include <functional>
+ #include <vector>
+@@ -59,6 +60,10 @@
+     [[nodiscard]] const std::vector<collision_event_3d>& events() const;
+     void clear_events();
+     void reset();
++    // step() synchronizes after solving. Also sync before queries when editing,
++    // before the first step, or after component/Tag changes outside simulation.
++    void sync_queries(const world& target_world);
++    [[nodiscard]] const spatial_query_3d& queries() const;
+     [[nodiscard]] const physics_world_3d_stats& stats() const;
+     [[nodiscard]] physics_settings_3d& settings();
+     [[nodiscard]] const physics_settings_3d& settings() const;
+@@ -69,6 +74,7 @@
+     void finalize_collision_events(u64 fixed_tick_index);
+     physics_settings_3d settings_;
+     physics_broadphase_3d broadphase_;
++    spatial_query_3d queries_;
+     rain_hash_map<collision_pair_key_3d,active_collision_3d,collision_pair_hash_3d> active_collisions_;
+     rain_hash_map<collision_pair_key_3d,active_collision_3d,collision_pair_hash_3d> current_collisions_;
+     std::vector<collision_pair_key_3d> active_pairs_;
+--- /dev/null
++++ b/engine/runtime/include/rain/runtime/spatial_query_3d.hpp
+@@ -0,0 +1,111 @@
++#pragma once
++
++#include <rain/core/tag/tag_query.hpp>
++#include <rain/runtime/collider_3d_component.hpp>
++#include <rain/runtime/collision_filter_3d_component.hpp>
++#include <rain/runtime/entity.hpp>
++#include <rain/runtime/physics_broadphase_3d.hpp>
++#include <optional>
++#include <vector>
++
++namespace rain {
++class world;
++
++struct ray_3d {
++    vec3 origin{};
++    vec3 direction{0,0,1}; // Normalized internally; distances are world units.
++    f32 max_distance = 1000;
++};
++struct query_sphere_3d { vec3 center{}; f32 radius = 0.5f; };
++// V0 translates a world-axis-aligned box; rotation during a sweep is unsupported.
++struct query_box_3d { vec3 center{}; vec3 half_extents{0.5f,0.5f,0.5f}; };
++enum class query_trigger_mode_3d : u8 { exclude, include, only };
++
++struct spatial_query_filter_3d {
++    u32 layer_mask = collision_layer_3d::all;
++    // Zero ignores the target's simulation mask. Nonzero enables bilateral filtering.
++    u32 source_layer = 0;
++    query_trigger_mode_3d triggers = query_trigger_mode_3d::exclude;
++    std::vector<entity_id> ignored_entities; // Complete ids, including generations.
++    tag_query tags; // Exact, local entity Tags, captured at sync; no prefix inheritance.
++};
++struct spatial_query_hit_3d {
++    entity_id entity;
++    vec3 point{};  // World point on the TARGET collider, not the swept shape's center.
++    vec3 normal{}; // Unit outward target normal, towards the querying shape.
++    f32 distance = 0;
++    f32 fraction = 0; // distance / requested max_distance; zero for overlaps.
++    bool started_overlapping = false; // Includes touching at t=0; distance is then zero.
++    bool trigger = false;
++};
++
++// Explicit read-only snapshot. No ECS pointers, impulses, events or hidden refresh.
++// sync() rebuilds a median-split AABB tree from active, enabled colliders, including
++// those without rigid bodies. Queries never mutate it and may run concurrently
++// provided no sync/clear is in progress and output vectors are not shared.
++// Hits can become stale after ECS changes: resync and check world::is_alive before use.
++class spatial_query_3d {
++public:
++    void sync(const world& target_world);
++    void clear();
++    [[nodiscard]] usize collider_count() const { return colliders_.size(); }
++    [[nodiscard]] usize node_count() const { return nodes_.size(); }
++    [[nodiscard]] u64 revision() const { return revision_; }
++
++    // Invalid input => no hit / cleared output. Dimensions and distances must be
++    // finite and nonnegative. Nonzero travel requires a finite nonzero direction.
++    // Zero travel is an overlap query and accepts a zero direction.
++    // All-hit results overwrite the output and sort by distance, then entity id.
++    // Initial overlap normals/witnesses are stable representatives, not an MTD solver.
++    [[nodiscard]] std::optional<spatial_query_hit_3d> raycast(const ray_3d& ray,
++        const spatial_query_filter_3d& filter = {}) const;
++    [[nodiscard]] bool raycast_any(const ray_3d& ray, const spatial_query_filter_3d& filter = {}) const;
++    void raycast_all(const ray_3d& ray, std::vector<spatial_query_hit_3d>& hits,
++        const spatial_query_filter_3d& filter = {}) const;
++    [[nodiscard]] std::optional<spatial_query_hit_3d> sweep_sphere(const query_sphere_3d& sphere,
++        vec3 direction, f32 max_distance, const spatial_query_filter_3d& filter = {}) const;
++    [[nodiscard]] bool sweep_sphere_any(const query_sphere_3d& sphere, vec3 direction,
++        f32 max_distance, const spatial_query_filter_3d& filter = {}) const;
++    void sweep_sphere_all(const query_sphere_3d& sphere, vec3 direction, f32 max_distance,
++        std::vector<spatial_query_hit_3d>& hits, const spatial_query_filter_3d& filter = {}) const;
++    [[nodiscard]] std::optional<spatial_query_hit_3d> sweep_box(const query_box_3d& box,
++        vec3 direction, f32 max_distance, const spatial_query_filter_3d& filter = {}) const;
++    [[nodiscard]] bool sweep_box_any(const query_box_3d& box, vec3 direction,
++        f32 max_distance, const spatial_query_filter_3d& filter = {}) const;
++    void sweep_box_all(const query_box_3d& box, vec3 direction, f32 max_distance,
++        std::vector<spatial_query_hit_3d>& hits, const spatial_query_filter_3d& filter = {}) const;
++    [[nodiscard]] bool overlap_sphere_any(const query_sphere_3d& sphere,
++        const spatial_query_filter_3d& filter = {}) const;
++    [[nodiscard]] bool overlap_box_any(const query_box_3d& box,
++        const spatial_query_filter_3d& filter = {}) const;
++    void overlap_sphere(const query_sphere_3d& sphere, std::vector<spatial_query_hit_3d>& hits,
++        const spatial_query_filter_3d& filter = {}) const;
++    void overlap_box(const query_box_3d& box, std::vector<spatial_query_hit_3d>& hits,
++        const spatial_query_filter_3d& filter = {}) const;
++
++private:
++    struct collider_record {
++        entity_id entity;
++        collider_shape_3d shape;
++        vec3 center, half_extents;
++        f32 radius = 0;
++        physics_aabb_3d bounds;
++        collision_filter_3d_component filter;
++        bool trigger = false;
++        tag_container tags;
++    };
++    struct tree_node {
++        physics_aabb_3d bounds;
++        u32 begin = 0, count = 0;
++        u32 left = 0, right = 0;
++    };
++    u32 build_node(u32 begin, u32 end);
++    std::optional<spatial_query_hit_3d> cast(collider_shape_3d shape, vec3 center,
++        vec3 half_extents, f32 radius, vec3 direction, f32 distance,
++        const spatial_query_filter_3d& filter, std::vector<spatial_query_hit_3d>* all, bool any) const;
++    std::vector<collider_record> colliders_;
++    std::vector<u32> indices_;
++    std::vector<tree_node> nodes_;
++    u64 revision_ = 0;
++};
++}
+--- /dev/null
++++ b/engine/runtime/src/spatial_query_3d.cpp
+@@ -0,0 +1,320 @@
++#include <rain/runtime/spatial_query_3d.hpp>
++#include "physics_geometry_3d.hpp"
++
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <limits>
++#include <numeric>
++
++namespace rain {
++namespace {
++using triple = std::array<double,3>;
++triple values(vec3 v) { return {v.x,v.y,v.z}; }
++vec3 vector(const triple& v) { return {static_cast<f32>(v[0]),static_cast<f32>(v[1]),static_cast<f32>(v[2])}; }
++bool finite(vec3 v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
++bool nonnegative(vec3 v) { return finite(v) && v.x>=0 && v.y>=0 && v.z>=0; }
++bool entity_less(entity_id a,entity_id b) {
++    return a.index<b.index || (a.index==b.index && a.generation<b.generation);
++}
++bool hit_less(const spatial_query_hit_3d& a,const spatial_query_hit_3d& b) {
++    return a.distance<b.distance || (a.distance==b.distance && entity_less(a.entity,b.entity));
++}
++vec3 closest_point(vec3 p,vec3 center,vec3 half) {
++    const auto a=values(p),c=values(center),h=values(half);
++    triple out;
++    for (usize i=0;i<3;++i) out[i]=std::clamp(a[i],c[i]-h[i],c[i]+h[i]);
++    return vector(out);
++}
++vec3 advance(vec3 origin,vec3 direction,double t) {
++    return {static_cast<f32>(origin.x+direction.x*t),static_cast<f32>(origin.y+direction.y*t),
++        static_cast<f32>(origin.z+direction.z*t)};
++}
++// Slabs are conservative candidate tests only, never the rounded-box narrowphase.
++bool intersects_bounds(const physics_aabb_3d& bounds,vec3 origin,vec3 direction,
++    vec3 extent,double max_distance) {
++    const auto lo=values(bounds.minimum),hi=values(bounds.maximum),o=values(origin),
++        d=values(direction),e=values(extent);
++    double enter=0,exit=max_distance;
++    for (usize i=0;i<3;++i) {
++        if (d[i]==0) {
++            if (o[i]<lo[i]-e[i] || o[i]>hi[i]+e[i]) return false;
++        } else {
++            double a=(lo[i]-e[i]-o[i])/d[i],b=(hi[i]+e[i]-o[i])/d[i];
++            if (a>b) std::swap(a,b);
++            enter=std::max(enter,a);exit=std::min(exit,b);
++            if (enter>exit) return false;
++        }
++    }
++    return true;
++}
++struct geometry_hit { double distance; vec3 normal; };
++
++// Exact point cast against box Minkowski-summed with a sphere. Distance to an
++// AABB is piecewise quadratic: split only at its six slab crossings, then solve
++// each interval analytically. This covers faces, rounded edges and corners,
++// tangencies, thin objects and long sweeps without sampling/tunneling.
++std::optional<geometry_hit> rounded_box_cast(vec3 origin,vec3 direction,vec3 center,
++    const triple& h,double radius,double max_distance) {
++    const auto source=values(origin),c=values(center),d=values(direction);
++    triple o;
++    for (usize i=0;i<3;++i) o[i]=source[i]-c[i];
++    const auto distance_squared=[&](double t) {
++        double sum=0;
++        for (usize i=0;i<3;++i) {
++            const double x=o[i]+d[i]*t;
++            const double delta=x-std::clamp(x,-h[i],h[i]);
++            sum+=delta*delta;
++        }
++        return sum;
++    };
++    const auto result=[&](double t) {
++        triple p,n;
++        double size=0;
++        for (usize i=0;i<3;++i) {
++            p[i]=o[i]+d[i]*t;
++            n[i]=p[i]-std::clamp(p[i],-h[i],h[i]);size+=n[i]*n[i];
++        }
++        if (size>1e-24) {
++            const double len=std::sqrt(size);
++            for (double& v:n) v/=len;
++        } else {
++            usize axis=0;
++            for (usize i=1;i<3;++i) if (h[i]-std::abs(p[i])<h[axis]-std::abs(p[axis])) axis=i;
++            n={0,0,0};
++            n[axis]=p[axis]<0 ? -1.0 : (p[axis]>0 ? 1.0 : (d[axis]>0 ? -1.0 : 1.0));
++        }
++        return geometry_hit{t,vector(n)};
++    };
++    const double radius_squared=radius*radius;
++    if (distance_squared(0)<=radius_squared) return result(0);
++    if (max_distance==0) return std::nullopt;
++    std::array<double,8> cuts{};
++    usize count=0;cuts[count++]=0;cuts[count++]=max_distance;
++    for (usize i=0;i<3;++i) if (d[i]!=0) for (double face:{-h[i],h[i]}) {
++        const double t=(face-o[i])/d[i];
++        if (t>0 && t<max_distance) cuts[count++]=t;
++    }
++    std::sort(cuts.begin(),cuts.begin()+static_cast<std::ptrdiff_t>(count));
++    for (usize interval=0;interval+1<count;++interval) {
++        const double begin=cuts[interval],end=cuts[interval+1];
++        if (begin==end) continue;
++        const double middle=begin+(end-begin)*0.5;
++        // Solve in local interval coordinates to reduce cancellation far from origin.
++        double a=0,b=0,c0=-radius_squared;
++        for (usize i=0;i<3;++i) {
++            const double m=o[i]+d[i]*middle;
++            if (m>=-h[i] && m<=h[i]) continue;
++            const double delta=o[i]+d[i]*begin-(m<0 ? -h[i] : h[i]);
++            a+=d[i]*d[i];b+=delta*d[i];c0+=delta*delta;
++        }
++        if (c0<=0) return result(begin);
++        if (a==0) continue;
++        double disc=b*b-a*c0;
++        const double tolerance=1e-13*std::max({b*b,std::abs(a*c0),1e-30});
++        if (disc< -tolerance) continue;
++        disc=std::max(disc,0.0);
++        const double q=-b-std::copysign(std::sqrt(disc),b);
++        double first=q/a,second=q==0 ? first : c0/q;
++        if (first>second) std::swap(first,second);
++        const double root=first>=0 ? first : second;
++        const double eps=1e-12*std::max(1.0,end-begin);
++        if (root>=-eps && root<=end-begin+eps)
++            return result(std::clamp(begin+root,begin,end));
++    }
++    return std::nullopt;
++}
++}
++
++void spatial_query_3d::clear() {
++    colliders_.clear();indices_.clear();nodes_.clear();++revision_;
++}
++void spatial_query_3d::sync(const world& w) {
++    clear();
++    const auto* pool=w.try_get_component_pool<collider_3d_component>();
++    if (!pool) return;
++    colliders_.reserve(pool->size());
++    for (usize i=0;i<pool->size();++i) {
++        const auto entity=pool->entity_at(i);
++        if (!w.is_entity_active(entity) || !w.has_component<transform_3d_component>(entity) ||
++            w.has_tag_in_hierarchy(entity,tag_id{"physics.disabled"})) continue;
++        const auto& collider=pool->get(entity);
++        if (!finite(collider.center)) continue;
++        const auto matrix=detail::current_world_matrix(w,entity);
++        bool valid=true;
++        for (const auto& row:matrix.values) for (f32 v:row) valid &= std::isfinite(v);
++        if (!valid) continue;
++        collider_record record{};
++        record.entity=entity;record.shape=collider.shape;
++        if (collider.shape==collider_shape_3d::box && finite(collider.half_extents)) {
++            const auto box=detail::make_world_aabb(matrix,collider);
++            record.center=box.center;record.half_extents=box.half_extents;
++        } else if (collider.shape==collider_shape_3d::sphere && std::isfinite(collider.radius)) {
++            const auto sphere=detail::make_world_sphere(matrix,collider);
++            record.center=sphere.center;record.radius=sphere.radius;
++            record.half_extents={sphere.radius,sphere.radius,sphere.radius};
++        } else continue;
++        record.bounds={record.center-record.half_extents,record.center+record.half_extents};
++        if (!finite(record.center) || !nonnegative(record.half_extents) ||
++            !finite(record.bounds.minimum) || !finite(record.bounds.maximum)) continue;
++        // Float center +/- extent may round inward. Expand one representable unit
++        // so a true boundary hit is never lost before the double-precision narrowphase.
++        const auto outward=[](f32 value,f32 direction) {
++            const f32 expanded=std::nextafter(value,direction);
++            return std::isfinite(expanded) ? expanded : value;
++        };
++        const f32 infinity=std::numeric_limits<f32>::infinity();
++        auto& lo=record.bounds.minimum;auto& hi=record.bounds.maximum;
++        lo={outward(lo.x,-infinity),outward(lo.y,-infinity),outward(lo.z,-infinity)};
++        hi={outward(hi.x,infinity),outward(hi.y,infinity),outward(hi.z,infinity)};
++        if (const auto* filter=w.try_get_component<collision_filter_3d_component>(entity)) record.filter=*filter;
++        record.trigger=w.has_tag_in_hierarchy(entity,tag_id{"physics.trigger"});
++        if (const auto* tags=w.try_get_tags(entity)) {
++            record.tags=*tags;record.tags.clear_pending_events();
++        }
++        colliders_.push_back(std::move(record));
++    }
++    indices_.resize(colliders_.size());
++    std::iota(indices_.begin(),indices_.end(),0u);
++    nodes_.reserve(colliders_.size()*2);
++    if (!indices_.empty()) build_node(0,static_cast<u32>(indices_.size()));
++}
++u32 spatial_query_3d::build_node(u32 begin,u32 end) {
++    const u32 index=static_cast<u32>(nodes_.size());
++    nodes_.push_back({});
++    auto bounds=colliders_[indices_[begin]].bounds;
++    for (u32 i=begin+1;i<end;++i) {
++        const auto& b=colliders_[indices_[i]].bounds;
++        bounds.minimum={std::min(bounds.minimum.x,b.minimum.x),std::min(bounds.minimum.y,b.minimum.y),std::min(bounds.minimum.z,b.minimum.z)};
++        bounds.maximum={std::max(bounds.maximum.x,b.maximum.x),std::max(bounds.maximum.y,b.maximum.y),std::max(bounds.maximum.z,b.maximum.z)};
++    }
++    nodes_[index].bounds=bounds;
++    if (end-begin<=4) { nodes_[index].begin=begin;nodes_[index].count=end-begin;return index; }
++    const auto lo=values(bounds.minimum),hi=values(bounds.maximum);
++    usize axis=0;
++    for (usize i=1;i<3;++i) if (hi[i]-lo[i]>hi[axis]-lo[axis]) axis=i;
++    const u32 middle=begin+(end-begin)/2;
++    std::nth_element(indices_.begin()+begin,indices_.begin()+middle,indices_.begin()+end,[&](u32 a,u32 b) {
++        const auto ca=values(colliders_[a].center)[axis],cb=values(colliders_[b].center)[axis];
++        return ca<cb || (ca==cb && entity_less(colliders_[a].entity,colliders_[b].entity));
++    });
++    const auto left=build_node(begin,middle),right=build_node(middle,end);
++    nodes_[index].left=left;nodes_[index].right=right;
++    return index;
++}
++
++std::optional<spatial_query_hit_3d> spatial_query_3d::cast(collider_shape_3d shape,vec3 center,
++    vec3 half,f32 radius,vec3 direction,f32 distance,const spatial_query_filter_3d& filter,
++    std::vector<spatial_query_hit_3d>* all,bool any) const {
++    if (all) all->clear();
++    if (!finite(center) || !nonnegative(half) || !std::isfinite(radius) || radius<0 ||
++        !finite(direction) || !std::isfinite(distance) || distance<0 || nodes_.empty()) return std::nullopt;
++    const double direction_length=std::hypot(static_cast<double>(direction.x),direction.y,direction.z);
++    if (distance>0 && direction_length==0) return std::nullopt;
++    if (direction_length>0) direction={static_cast<f32>(direction.x/direction_length),
++        static_cast<f32>(direction.y/direction_length),static_cast<f32>(direction.z/direction_length)};
++    const vec3 extent=shape==collider_shape_3d::sphere ? vec3{radius,radius,radius} : half;
++    std::optional<spatial_query_hit_3d> best;
++    const auto visit=[&](auto&& self,u32 index)->bool {
++        const auto& node=nodes_[index];
++        if (!intersects_bounds(node.bounds,center,direction,extent,distance)) return false;
++        if (node.count==0) return self(self,node.left) || self(self,node.right);
++        for (u32 i=node.begin;i<node.begin+node.count;++i) {
++            const auto& target=colliders_[indices_[i]];
++            if ((filter.layer_mask & target.filter.layer)==0 ||
++                (filter.source_layer!=0 && (filter.source_layer & target.filter.mask)==0) ||
++                (filter.triggers==query_trigger_mode_3d::exclude && target.trigger) ||
++                (filter.triggers==query_trigger_mode_3d::only && !target.trigger) ||
++                std::find(filter.ignored_entities.begin(),filter.ignored_entities.end(),target.entity)!=filter.ignored_entities.end() ||
++                !filter.tags.matches(target.tags)) continue;
++            if (!intersects_bounds(target.bounds,center,direction,extent,distance)) continue;
++            std::optional<geometry_hit> geometry;
++            vec3 normal,point;
++            if (shape==collider_shape_3d::sphere) {
++                const bool sphere=target.shape==collider_shape_3d::sphere;
++                geometry=rounded_box_cast(center,direction,target.center,
++                    sphere ? triple{} : values(target.half_extents),
++                    static_cast<double>(radius)+(sphere ? target.radius : 0),distance);
++                if (!geometry) continue;
++                normal=geometry->normal;
++                if (sphere) point=target.center+normal*target.radius;
++                else {
++                    point=closest_point(advance(center,direction,geometry->distance),target.center,target.half_extents);
++                    // A ray/sphere center inside a box has no unique witness: use nearest face.
++                    if (geometry->distance==0 && length_squared(point-center)==0) {
++                        const auto h=values(target.half_extents),c=values(target.center),n=values(normal);
++                        auto p=values(point);
++                        for (usize j=0;j<3;++j) if (n[j]!=0) p[j]=c[j]+n[j]*h[j];
++                        point=vector(p);
++                    }
++                }
++            } else if (target.shape==collider_shape_3d::box) {
++                auto h=values(half);const auto th=values(target.half_extents);
++                for (usize j=0;j<3;++j) h[j]+=th[j];
++                geometry=rounded_box_cast(center,direction,target.center,h,0,distance);
++                if (!geometry) continue;
++                normal=geometry->normal;
++                point=closest_point(advance(center,direction,geometry->distance),target.center,target.half_extents);
++                auto p=values(point);const auto c=values(target.center),n=values(normal);
++                for (usize j=0;j<3;++j) if (n[j]!=0) p[j]=c[j]+n[j]*th[j];
++                point=vector(p);
++            } else {
++                // Relative motion: sweep target sphere backwards against the stationary query box.
++                geometry=rounded_box_cast(target.center,-direction,center,values(half),target.radius,distance);
++                if (!geometry) continue;
++                normal=-geometry->normal;point=target.center+normal*target.radius;
++            }
++            const f32 t=static_cast<f32>(geometry->distance);
++            spatial_query_hit_3d hit{.entity=target.entity,.point=point,.normal=normal,
++                .distance=t,.fraction=distance>0 ? t/distance : 0,.started_overlapping=geometry->distance==0,
++                .trigger=target.trigger};
++            if (!best || hit_less(hit,*best)) best=hit;
++            if (all) all->push_back(hit);
++            if (any) return true;
++        }
++        return false;
++    };
++    visit(visit,0);
++    if (all) std::sort(all->begin(),all->end(),hit_less);
++    return best;
++}
++std::optional<spatial_query_hit_3d> spatial_query_3d::raycast(const ray_3d& ray,const spatial_query_filter_3d& filter) const {
++    return cast(collider_shape_3d::sphere,ray.origin,{},0,ray.direction,ray.max_distance,filter,nullptr,false);
++}
++bool spatial_query_3d::raycast_any(const ray_3d& ray,const spatial_query_filter_3d& filter) const {
++    return cast(collider_shape_3d::sphere,ray.origin,{},0,ray.direction,ray.max_distance,filter,nullptr,true).has_value();
++}
++void spatial_query_3d::raycast_all(const ray_3d& ray,std::vector<spatial_query_hit_3d>& hits,const spatial_query_filter_3d& filter) const {
++    cast(collider_shape_3d::sphere,ray.origin,{},0,ray.direction,ray.max_distance,filter,&hits,false);
++}
++std::optional<spatial_query_hit_3d> spatial_query_3d::sweep_sphere(const query_sphere_3d& sphere,vec3 direction,f32 distance,const spatial_query_filter_3d& filter) const {
++    return cast(collider_shape_3d::sphere,sphere.center,{},sphere.radius,direction,distance,filter,nullptr,false);
++}
++bool spatial_query_3d::sweep_sphere_any(const query_sphere_3d& sphere,vec3 direction,f32 distance,const spatial_query_filter_3d& filter) const {
++    return cast(collider_shape_3d::sphere,sphere.center,{},sphere.radius,direction,distance,filter,nullptr,true).has_value();
++}
++void spatial_query_3d::sweep_sphere_all(const query_sphere_3d& sphere,vec3 direction,f32 distance,std::vector<spatial_query_hit_3d>& hits,const spatial_query_filter_3d& filter) const {
++    cast(collider_shape_3d::sphere,sphere.center,{},sphere.radius,direction,distance,filter,&hits,false);
++}
++std::optional<spatial_query_hit_3d> spatial_query_3d::sweep_box(const query_box_3d& box,vec3 direction,f32 distance,const spatial_query_filter_3d& filter) const {
++    return cast(collider_shape_3d::box,box.center,box.half_extents,0,direction,distance,filter,nullptr,false);
++}
++bool spatial_query_3d::sweep_box_any(const query_box_3d& box,vec3 direction,f32 distance,const spatial_query_filter_3d& filter) const {
++    return cast(collider_shape_3d::box,box.center,box.half_extents,0,direction,distance,filter,nullptr,true).has_value();
++}
++void spatial_query_3d::sweep_box_all(const query_box_3d& box,vec3 direction,f32 distance,std::vector<spatial_query_hit_3d>& hits,const spatial_query_filter_3d& filter) const {
++    cast(collider_shape_3d::box,box.center,box.half_extents,0,direction,distance,filter,&hits,false);
++}
++bool spatial_query_3d::overlap_sphere_any(const query_sphere_3d& sphere,const spatial_query_filter_3d& filter) const {
++    return sweep_sphere_any(sphere,{},0,filter);
++}
++bool spatial_query_3d::overlap_box_any(const query_box_3d& box,const spatial_query_filter_3d& filter) const {
++    return sweep_box_any(box,{},0,filter);
++}
++void spatial_query_3d::overlap_sphere(const query_sphere_3d& sphere,std::vector<spatial_query_hit_3d>& hits,const spatial_query_filter_3d& filter) const {
++    sweep_sphere_all(sphere,{},0,hits,filter);
++}
++void spatial_query_3d::overlap_box(const query_box_3d& box,std::vector<spatial_query_hit_3d>& hits,const spatial_query_filter_3d& filter) const {
++    sweep_box_all(box,{},0,hits,filter);
++}
++}
+--- a/engine/runtime/CMakeLists.txt
++++ b/engine/runtime/CMakeLists.txt
+@@ -8,6 +8,8 @@
+         src/movement_system_3d.cpp
+         src/physics_system_3d.cpp
+         src/physics_world_3d.cpp
++        src/physics_geometry_3d.hpp
++        src/spatial_query_3d.cpp
+         src/physics_broadphase_3d.cpp
+         src/camera_input_system_3d.cpp
+         src/rotation_system_3d.cpp
+@@ -32,6 +34,7 @@
+         include/rain/runtime/physics_3d.hpp
+         include/rain/runtime/physics_system_3d.hpp
+         include/rain/runtime/physics_world_3d.hpp
++        include/rain/runtime/spatial_query_3d.hpp
+         include/rain/runtime/physics_broadphase_3d.hpp
+         include/rain/runtime/collision_filter_3d_component.hpp
+         include/rain/runtime/fixed_step.hpp
+--- a/engine/runtime/include/rain/runtime/physics_system_3d.hpp
++++ b/engine/runtime/include/rain/runtime/physics_system_3d.hpp
+@@ -5,4 +5,7 @@
+ // Register in the fixed physics phase with a persistent physics_world_3d* in
+ // user_data. The world owns component queries, contact cache and event delivery.
+ void physics_world_system_3d(system_context& context,void* user_data);
++// Optional variable-frame sync after edits/movement and before picking/queries.
++// Same persistent physics_world_3d* user_data as the simulation system.
++void physics_query_sync_system_3d(system_context& context,void* user_data);
+ }
+--- a/engine/runtime/src/physics_system_3d.cpp
++++ b/engine/runtime/src/physics_system_3d.cpp
+@@ -2,6 +2,10 @@
+ #include <rain/runtime/physics_world_3d.hpp>
+ 
+ namespace rain {
++void physics_query_sync_system_3d(system_context& context,void* user_data) {
++    if (context.target_world && user_data)
++        static_cast<physics_world_3d*>(user_data)->sync_queries(*context.target_world);
++}
+ void physics_world_system_3d(system_context& context,void* user_data) {
+     if (!context.target_world || !user_data) return;
+     auto& physics = *static_cast<physics_world_3d*>(user_data);
+--- a/engine/render/include/rain/render/camera_3d.hpp
++++ b/engine/render/include/rain/render/camera_3d.hpp
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include <rain/core/math/mat4.hpp>
++#include <rain/runtime/world_transform_3d_component.hpp>
+ 
+ namespace rain {
+     struct camera_3d_component {
+@@ -21,4 +22,26 @@
+         f32 far_plane = 1000.0f;
+     };
+ 
++    // Shared by rendering and picking: use the same orthonormal view basis.
++    [[nodiscard]] inline bool build_camera_frame_3d(const world_transform_3d_component& transform,
++        const camera_3d_component& camera, f32 aspect_ratio, camera_3d_frame& result) {
++        result = {};
++        if (!std::isfinite(aspect_ratio) || aspect_ratio <= 0 ||
++            !std::isfinite(camera.vertical_fov_radians) || camera.vertical_fov_radians <= 0 ||
++            camera.vertical_fov_radians >= 3.14159265f || !std::isfinite(camera.near_plane) ||
++            !std::isfinite(camera.far_plane) || camera.near_plane <= 0 || camera.far_plane <= camera.near_plane ||
++            !std::isfinite(length_squared(transform.forward)) || length_squared(transform.forward) < 1e-12f ||
++            !std::isfinite(length_squared(cross(transform.up,transform.forward))) ||
++            length_squared(cross(transform.up,transform.forward)) < 1e-12f) return false;
++        result.vertical_fov_radians=camera.vertical_fov_radians;
++        result.aspect_ratio=aspect_ratio;
++        result.near_plane=camera.near_plane;result.far_plane=camera.far_plane;
++        result.position=transform.position;
++        result.view=make_look_at_lh(transform.position,transform.position+transform.forward,transform.up);
++        result.projection=make_perspective_fov_lh(camera.vertical_fov_radians,aspect_ratio,camera.near_plane,camera.far_plane);
++        result.view_projection=result.view*result.projection;
++        for (const auto& row:result.view_projection.values) for (f32 value:row)
++            if (!std::isfinite(value)) { result={};return false; }
++        return true;
++    }
+ }
+--- a/engine/render/src/render_system_3d.cpp
++++ b/engine/render/src/render_system_3d.cpp
+@@ -31,21 +31,6 @@
+         static_assert(sizeof(object_constants_3d) == 192);
+         static_assert(sizeof(scene_constants_3d) == 64);
+         static_assert(sizeof(material_constants_3d) == 48);
+-
+-        camera_3d_frame build_camera_frame(const world_transform_3d_component& transform, const camera_3d_component& camera, f32 aspect_ratio) {
+-            camera_3d_frame result{};
+-            const vec3 forward = transform.forward;
+-
+-            result.vertical_fov_radians = camera.vertical_fov_radians;
+-            result.aspect_ratio = aspect_ratio;
+-            result.near_plane = camera.near_plane;
+-            result.far_plane = camera.far_plane;
+-            result.position = transform.position;
+-            result.view = make_look_at_lh(transform.position, transform.position + forward, transform.up);
+-            result.projection = make_perspective_fov_lh(result.vertical_fov_radians, aspect_ratio, result.near_plane, result.far_plane);
+-            result.view_projection = result.view * result.projection;
+-            return result;
+-        }
+ 
+         f32 unit_factor(f32 value, f32 fallback) {
+             return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
+@@ -142,11 +127,7 @@
+         const auto& camera_transform = target_world.get_component<world_transform_3d_component>(camera_entity);
+         const auto& camera = target_world.get_component<camera_3d_component>(camera_entity);
+         const f32 aspect_ratio = static_cast<f32>(backend_->width()) / static_cast<f32>(backend_->height());
+-        if (!std::isfinite(camera.vertical_fov_radians) || camera.vertical_fov_radians <= 0.0f ||
+-            camera.vertical_fov_radians >= 3.14159265f || !std::isfinite(camera.near_plane) ||
+-            !std::isfinite(camera.far_plane) || camera.near_plane <= 0.0f ||
+-            camera.far_plane <= camera.near_plane) return;
+-        camera_frame_ = build_camera_frame(camera_transform, camera, aspect_ratio);
++        if (!build_camera_frame_3d(camera_transform,camera,aspect_ratio,camera_frame_)) return;
+         has_camera_ = true;
+         const entity_query_result lights = target_world.query_entities(light_query_);
+         light_ = lights.empty() ? directional_light_3d_component{} : target_world.get_component<directional_light_3d_component>(lights.entities.front());
+--- /dev/null
++++ b/engine/render/include/rain/render/picking_3d.hpp
+@@ -0,0 +1,16 @@
++#pragma once
++#include <rain/core/math/vec2.hpp>
++#include <rain/render/camera_3d.hpp>
++#include <rain/runtime/spatial_query_3d.hpp>
++
++namespace rain {
++struct screen_viewport_3d { f32 x=0,y=0,width=0,height=0; };
++// Continuous pixel coordinates, top-left origin, same units as viewport. Viewport
++// offsets are supported; right/bottom edges are exclusive. Converts D3D [0,1]
++// depth through the actual view_projection, including perspective/orthographic.
++// The ray starts on the near plane and ends on the far plane. Query hit distance
++// is measured from that near-plane origin. No hidden ECS or physics dependency.
++// Invalid/outside/minimized/singular input => false, output reset to an empty ray.
++[[nodiscard]] bool screen_point_to_ray_3d(const camera_3d_frame& camera,
++    screen_viewport_3d viewport,vec2 point,ray_3d& ray);
++}
+--- /dev/null
++++ b/engine/render/src/picking_3d.cpp
+@@ -0,0 +1,54 @@
++#include <rain/render/picking_3d.hpp>
++#include <algorithm>
++#include <cmath>
++
++namespace rain {
++bool screen_point_to_ray_3d(const camera_3d_frame& camera,screen_viewport_3d viewport,vec2 point,ray_3d& ray) {
++    ray={.direction={},.max_distance=0};
++    if (!std::isfinite(viewport.x) || !std::isfinite(viewport.y) || !std::isfinite(viewport.width) ||
++        !std::isfinite(viewport.height) || viewport.width<=0 || viewport.height<=0 ||
++        !std::isfinite(point.x) || !std::isfinite(point.y)) return false;
++    const double u=(static_cast<double>(point.x)-viewport.x)/viewport.width;
++    const double v=(static_cast<double>(point.y)-viewport.y)/viewport.height;
++    if (u<0 || v<0 || u>=1 || v>=1) return false;
++    double augmented[4][8]{};
++    for (usize row=0;row<4;++row) for (usize column=0;column<4;++column) {
++        const double value=camera.view_projection.values[row][column];
++        if (!std::isfinite(value)) return false;
++        augmented[row][column]=value;augmented[row][column+4]=row==column ? 1.0 : 0.0;
++    }
++    for (usize column=0;column<4;++column) {
++        usize pivot=column;
++        for (usize row=column+1;row<4;++row)
++            if (std::abs(augmented[row][column])>std::abs(augmented[pivot][column])) pivot=row;
++        if (augmented[pivot][column]==0) return false;
++        if (pivot!=column) for (usize i=0;i<8;++i) std::swap(augmented[column][i],augmented[pivot][i]);
++        const double scale=augmented[column][column];
++        for (double& value:augmented[column]) value/=scale;
++        for (usize row=0;row<4;++row) if (row!=column) {
++            const double factor=augmented[row][column];
++            for (usize i=0;i<8;++i) augmented[row][i]-=factor*augmented[column][i];
++        }
++    }
++    double points[2][3]{};
++    for (usize depth=0;depth<2;++depth) {
++        const double ndc[4]{u*2-1,1-v*2,static_cast<double>(depth),1};
++        double world[4]{};
++        for (usize column=0;column<4;++column) for (usize row=0;row<4;++row)
++            world[column]+=ndc[row]*augmented[row][column+4];
++        if (!std::isfinite(world[3]) || world[3]==0) return false;
++        for (usize i=0;i<3;++i) {
++            points[depth][i]=world[i]/world[3];
++            if (!std::isfinite(points[depth][i])) return false;
++        }
++    }
++    const double dx=points[1][0]-points[0][0],dy=points[1][1]-points[0][1],dz=points[1][2]-points[0][2];
++    const double distance=std::hypot(dx,dy,dz);
++    if (!std::isfinite(distance) || distance<=0 || !std::isfinite(static_cast<f32>(distance))) return false;
++    ray_3d result{.origin={static_cast<f32>(points[0][0]),static_cast<f32>(points[0][1]),static_cast<f32>(points[0][2])},
++        .direction={static_cast<f32>(dx/distance),static_cast<f32>(dy/distance),static_cast<f32>(dz/distance)},
++        .max_distance=static_cast<f32>(distance)};
++    if (!std::isfinite(result.origin.x) || !std::isfinite(result.origin.y) || !std::isfinite(result.origin.z)) return false;
++    ray=result;return true;
++}
++}
+--- a/engine/render/CMakeLists.txt
++++ b/engine/render/CMakeLists.txt
+@@ -21,6 +21,7 @@
+         src/mesh_3d_registry.cpp
+         src/material_3d_registry.cpp
+         src/render_system_3d.cpp
++        src/picking_3d.cpp
+         shaders/mesh_3d.hlsl
+         src/mesh_3d_shader_source.hpp.in
+ 
+@@ -44,6 +45,7 @@
+         include/rain/render/bounds_3d.hpp
+         include/rain/render/frustum_culling_3d.hpp
+         include/rain/render/camera_3d.hpp
++        include/rain/render/picking_3d.hpp
+         include/rain/render/directional_light_3d_component.hpp
+         include/rain/render/material_3d.hpp
+         include/rain/render/material_3d_registry.hpp
+--- a/engine/platform/include/rain/platform/window.hpp
++++ b/engine/platform/include/rain/platform/window.hpp
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include<rain/core/types.hpp>
++#include <rain/core/math/vec2.hpp>
+ #include<rain/platform/key_code.hpp>
+ 
+ #include<string>
+@@ -38,6 +39,9 @@
+ 
+         [[nodiscard]]f32 mouse_x()const;
+         [[nodiscard]]f32 mouse_y()const;
++        // GLFW cursor units / logical window size, independent of framebuffer DPI.
++        // False when unfocused, outside the client area, or minimized; output reset.
++        [[nodiscard]] bool mouse_position_normalized(vec2& position) const;
+ 
+         [[nodiscard]]u32 width()const;
+         [[nodiscard]]u32 height()const;
+--- a/engine/platform/src/window.cpp
++++ b/engine/platform/src/window.cpp
+@@ -3,6 +3,7 @@
+ #include<rain/core/assert.hpp>
+ #include<rain/core/log.hpp>
+ #include <sstream>
++#include <cmath>
+ #include<GLFW/glfw3.h>
+ 
+ #define GLFW_EXPOSE_NATIVE_WIN32
+@@ -113,6 +114,20 @@
+         return static_cast<f32>(y);
+     }
+ 
++    bool rain_window::mouse_position_normalized(vec2& position) const {
++        position={};
++        int width=0,height=0,pixel_width=0,pixel_height=0;
++        glfwGetWindowSize(handle_,&width,&height);
++        glfwGetFramebufferSize(handle_,&pixel_width,&pixel_height);
++        if (width<=0 || height<=0 || pixel_width<=0 || pixel_height<=0 ||
++            glfwGetWindowAttrib(handle_,GLFW_FOCUSED)!=GLFW_TRUE) return false;
++        double x=0,y=0;
++        glfwGetCursorPos(handle_,&x,&y);
++        if (!std::isfinite(x) || !std::isfinite(y) || x<0 || y<0 || x>=width || y>=height) return false;
++        position={static_cast<f32>(x/width),static_cast<f32>(y/height)};
++        return true;
++    }
++
+     u32 rain_window::width()const {
+         return width_;
+     }
+--- /dev/null
++++ b/samples/sample_2d_action/src/sample_spatial_query.hpp
+@@ -0,0 +1,42 @@
++#pragma once
++#include "sample_3d_world_builder.hpp"
++#include <rain/runtime/physics_world_3d.hpp>
++#include <rain/runtime/system_scheduler.hpp>
++#include <rain/core/math/vec4.hpp>
++
++namespace rain { class rain_window; class render_backend; class input_action_map; }
++namespace sample_3d {
++enum class spatial_demo_mode { ray, sphere, box };
++struct spatial_query_demo {
++    rain::physics_world_3d* physics=nullptr;
++    rain::rain_window* window=nullptr;
++    rain::render_backend* renderer=nullptr;
++    rain::input_action_map* input=nullptr;
++    rain::entity_id camera,selected;
++    spatial_demo_mode mode=spatial_demo_mode::ray;
++    bool include_triggers=false;
++    bool log_selection=true;
++    std::optional<rain::spatial_query_hit_3d> last_hit;
++    rain::u64 query_count=0;
++    // Scripted graphical smoke uses the same projection/query/highlight system.
++    bool smoke_mode=false;
++    rain::entity_id smoke_target;
++    rain::u32 smoke_modes_hit=0;
++
++    void initialize(rain::world& world,const sample_3d_world_resources& resources);
++    void reset(rain::world& world);
++    // Shared by the interactive system and headless regression tests.
++    // nullptr ray hides the preview; click on a valid ray with no hit clears selection.
++    void evaluate(rain::world& world,const rain::ray_3d* ray,bool clicked);
++    static void run(rain::system_context& context,void* user_data);
++private:
++    void restore_tint(rain::world& world);
++    void select(rain::world& world,rain::entity_id entity);
++    rain::entity_id path_marker,probe_marker,point_marker,normal_marker;
++    sample_3d_world_resources resources_;
++    std::vector<rain::spatial_query_hit_3d> candidates_;
++    rain::vec4 selected_tint_{1,1,1,1};
++    bool previous_mouse_down_=false;
++};
++[[nodiscard]] int run_spatial_query_tests();
++}
+--- /dev/null
++++ b/samples/sample_2d_action/src/sample_spatial_query.cpp
+@@ -0,0 +1,167 @@
++#include "sample_spatial_query.hpp"
++#include "sample_physics_3d.hpp"
++#include <rain/core/log.hpp>
++#include <rain/platform/input_action.hpp>
++#include <rain/platform/window.hpp>
++#include <rain/render/mesh_3d_component.hpp>
++#include <rain/render/picking_3d.hpp>
++#include <rain/render/render_backend.hpp>
++#include <rain/runtime/transform_3d_component.hpp>
++#include <rain/runtime/world_transform_3d_component.hpp>
++#include <algorithm>
++#include <cmath>
++#include <string>
++
++namespace sample_3d {
++namespace {
++using namespace rain;
++void visibility(world& w,entity_id e,bool visible) {
++    if (!w.is_alive(e)) return;
++    const tag_id hidden{"render.hidden"};
++    if (visible && w.has_tag(e,hidden)) w.remove_tag(e,hidden);
++    if (!visible && !w.has_tag(e,hidden)) w.add_tag(e,hidden);
++}
++void marker(world& w,entity_id e,vec3 position,vec3 scale,vec3 rotation,vec4 tint) {
++    if (!w.is_alive(e)) return;
++    auto& transform=w.get_component<transform_3d_component>(e);
++    transform={.position=position,.rotation=rotation,.scale=scale};
++    // Markers update after the hierarchy pass. They have no parents/colliders.
++    auto& cached=w.get_component<world_transform_3d_component>(e);
++    cached.matrix=transform.matrix();cached.position=position;
++    w.get_component<mesh_3d_component>(e).tint=tint;
++    visibility(w,e,true);
++}
++void segment(world& w,entity_id e,vec3 from,vec3 to,f32 width,vec4 color) {
++    const vec3 delta=to-from;
++    const f32 distance=length(delta);
++    if (distance<=0.00001f) { visibility(w,e,false);return; }
++    const vec3 direction=delta/distance;
++    marker(w,e,(from+to)*0.5f,{width,width,distance*0.5f},
++        {-std::asin(std::clamp(direction.y,-1.0f,1.0f)),std::atan2(direction.x,direction.z),0},color);
++}
++}
++void spatial_query_demo::initialize(world& w,const sample_3d_world_resources& resources) {
++    resources_=resources;
++    const auto create=[&](const char* name,bool sphere) {
++        const auto e=w.create_entity({.name=string_id{name}});
++        w.add_component<transform_3d_component>(e);
++        w.add_component<world_transform_3d_component>(e);
++        w.add_component<mesh_3d_component>(e,mesh_3d_component{
++            .mesh=sphere ? resources.sphere_mesh : resources.cube_mesh,.material=resources.cube_material});
++        for (const char* tag:{"transform.3d","object.renderable","render.3d","render.hidden"}) w.add_tag(e,tag_id{tag});
++        return e;
++    };
++    path_marker=create("query.path",false);probe_marker=create("query.probe",true);
++    point_marker=create("query.point",true);normal_marker=create("query.normal",false);
++}
++void spatial_query_demo::restore_tint(world& w) {
++    auto* mesh=w.try_get_component<mesh_3d_component>(selected);
++    if (!mesh) return;
++    if (const auto* feedback=w.try_get_component<physics_feedback_component>(selected))
++        mesh->tint=feedback->trigger_contacts>0 ? vec4{0.1f,1,1,1} : feedback->normal_tint;
++    else mesh->tint=selected_tint_;
++}
++void spatial_query_demo::select(world& w,entity_id entity) {
++    if (selected==entity) return;
++    if (w.is_alive(selected)) w.remove_tag(selected,tag_id{"state.selected"});
++    selected=entity;
++    if (auto* mesh=w.try_get_component<mesh_3d_component>(selected)) {
++        selected_tint_=mesh->tint;
++        w.add_tag(selected,tag_id{"state.selected"});
++    }
++    if (log_selection) {
++        if (selected.is_valid() && last_hit)
++            log_info("Selected entity "+std::to_string(selected.index)+":"+std::to_string(selected.generation)+
++                ", distance="+std::to_string(last_hit->distance)+", normal=("+
++                std::to_string(last_hit->normal.x)+","+std::to_string(last_hit->normal.y)+","+
++                std::to_string(last_hit->normal.z)+")"+(last_hit->trigger ? " [trigger]" : ""));
++        else log_info("Selection cleared");
++    }
++}
++void spatial_query_demo::reset(world& w) {
++    restore_tint(w);select(w,{});last_hit.reset();query_count=0;
++    for (auto e:{path_marker,probe_marker,point_marker,normal_marker}) visibility(w,e,false);
++}
++void spatial_query_demo::evaluate(world& w,const ray_3d* ray,bool clicked) {
++    restore_tint(w);
++    // Destroyed, disabled or hidden selections must not retain highlight/owned Tag.
++    if (!w.is_entity_active(selected) || !w.has_component<collider_3d_component>(selected) ||
++        !w.has_component<mesh_3d_component>(selected) || w.has_tag_in_hierarchy(selected,tag_id{"physics.disabled"}) ||
++        w.has_tag_in_hierarchy(selected,tag_id{"render.hidden"})) select(w,{});
++    last_hit.reset();
++    for (auto e:{path_marker,probe_marker,point_marker,normal_marker}) visibility(w,e,false);
++    if (ray && physics) {
++        spatial_query_filter_3d filter;
++        filter.triggers=include_triggers ? query_trigger_mode_3d::include : query_trigger_mode_3d::exclude;
++        filter.tags.require_all(tag_id{"object.renderable"}).reject(tag_id{"render.hidden"});
++        filter.ignored_entities.push_back(camera);
++        // Keep the on-screen preview compact; the engine API has no such distance cap.
++        auto cast=*ray;cast.max_distance=std::min(cast.max_distance,40.0f);
++        const auto& queries=physics->queries();
++        constexpr f32 size=0.45f;
++        if (mode==spatial_demo_mode::ray) queries.raycast_all(cast,candidates_,filter);
++        else if (mode==spatial_demo_mode::sphere)
++            queries.sweep_sphere_all({cast.origin,size},cast.direction,cast.max_distance,candidates_,filter);
++        else queries.sweep_box_all({cast.origin,{size,size,size}},cast.direction,cast.max_distance,candidates_,filter);
++        // Rendering inherits render.hidden from parents. That is a presentation
++        // policy, not a physics filter; skip hidden ancestors without blocking hits behind them.
++        for (const auto& candidate:candidates_) if (w.is_entity_active(candidate.entity) &&
++            !w.has_tag_in_hierarchy(candidate.entity,tag_id{"render.hidden"})) { last_hit=candidate;break; }
++        ++query_count;
++        if (last_hit && !w.is_alive(last_hit->entity)) last_hit.reset();
++        const vec3 end=cast.origin+normalize(cast.direction)*(last_hit ? last_hit->distance : cast.max_distance);
++        segment(w,path_marker,cast.origin,end,0.012f,{0.2f,0.8f,1,1});
++        if (mode!=spatial_demo_mode::ray && w.is_alive(probe_marker)) {
++            w.get_component<mesh_3d_component>(probe_marker).mesh=mode==spatial_demo_mode::sphere ? resources_.sphere_mesh : resources_.cube_mesh;
++            marker(w,probe_marker,end,{size,size,size},{},last_hit ? vec4{0.15f,1,0.3f,0.45f} : vec4{0.4f,0.65f,1,0.45f});
++        }
++        if (last_hit) {
++            marker(w,point_marker,last_hit->point,{0.07f,0.07f,0.07f},{},{1,1,1,1});
++            segment(w,normal_marker,last_hit->point,last_hit->point+last_hit->normal*0.8f,0.025f,{1,0.3f,0.1f,1});
++        }
++        if (clicked) select(w,last_hit ? last_hit->entity : entity_id{});
++    }
++    if (auto* mesh=w.try_get_component<mesh_3d_component>(selected)) mesh->tint={1,0.95f,0.2f,1};
++}
++void spatial_query_demo::run(system_context& context,void* user_data) {
++    if (!context.target_world || !user_data) return;
++    auto& demo=*static_cast<spatial_query_demo*>(user_data);
++    if (!demo.window || !demo.renderer || !demo.input) return;
++    auto& w=*context.target_world;
++    for (auto pair:{std::pair{"query.ray",spatial_demo_mode::ray},std::pair{"query.sphere",spatial_demo_mode::sphere},
++                   std::pair{"query.box",spatial_demo_mode::box}})
++        if (demo.input->is_pressed(string_id{pair.first})) {
++            demo.mode=pair.second;log_info(std::string{"Query mode: "}+pair.first);
++        }
++    if (demo.input->is_pressed(string_id{"query.triggers"})) {
++        demo.include_triggers=!demo.include_triggers;
++        log_info(demo.include_triggers ? "Query triggers included" : "Query triggers excluded");
++    }
++    const bool down=demo.window->is_mouse_button_down(mouse_button::left);
++    const bool clicked=down && !demo.previous_mouse_down_;
++    demo.previous_mouse_down_=down;
++    const auto* transform=w.try_get_component<world_transform_3d_component>(demo.camera);
++    const auto* camera=w.try_get_component<camera_3d_component>(demo.camera);
++    const f32 width=static_cast<f32>(demo.renderer->width()),height=static_cast<f32>(demo.renderer->height());
++    vec2 mouse;camera_3d_frame frame;ray_3d ray;
++    const bool camera_valid=transform && camera && w.is_entity_active(demo.camera) && height>0 && width>0 &&
++        build_camera_frame_3d(*transform,*camera,width/height,frame);
++    bool pointer_valid=false;
++    bool select_pressed=clicked;
++    if (demo.smoke_mode && camera_valid) {
++        const auto* target=w.try_get_component<world_transform_3d_component>(demo.smoke_target);
++        if (target) {
++            const auto ndc=transform_point(target->position,frame.view_projection);
++            mouse={(ndc.x+1)*0.5f,(1-ndc.y)*0.5f};pointer_valid=true;
++            demo.mode=static_cast<spatial_demo_mode>((context.frame_index/60)%3);
++            select_pressed=context.frame_index%60==0;
++        }
++    } else pointer_valid=demo.window->mouse_position_normalized(mouse);
++    if (camera_valid && pointer_valid &&
++        screen_point_to_ray_3d(frame,{0,0,width,height},{mouse.x*width,mouse.y*height},ray)) {
++        demo.evaluate(w,&ray,select_pressed);
++        if (demo.smoke_mode && demo.last_hit && demo.last_hit->entity==demo.smoke_target)
++            demo.smoke_modes_hit |= 1u<<static_cast<u32>(demo.mode);
++    } else demo.evaluate(w,nullptr,false);
++}
++}
+--- a/samples/sample_2d_action/src/sample_physics_3d.cpp
++++ b/samples/sample_2d_action/src/sample_physics_3d.cpp
+@@ -124,6 +124,9 @@
+     scheduler.add_system({.system_name="sample.physics_events", .owner_name="sample_2d_action",
+         .phase=system_phase::post_physics, .entity_query={},
+         .function=physics_demo_systems::consume_events, .user_data=&physics});
++    scheduler.add_system({.system_name="system.physics_query_sync_3d", .owner_name="sample_2d_action",
++        .phase=system_phase::post_update, .priority=75, .entity_query={},
++        .function=physics_query_sync_system_3d, .user_data=&physics.simulation});
+     entity_query_desc hierarchy;
+     hierarchy.required_components={get_type_id<transform_3d_component>()};
+     hierarchy.required_tags.require_all(tag_id{"transform.3d"}).reject(tag_id{"transform.disabled"});
+--- a/samples/sample_2d_action/src/main.cpp
++++ b/samples/sample_2d_action/src/main.cpp
+@@ -1,6 +1,7 @@
+ #include "sample_2d_world_builder.hpp"
+ #include "sample_3d_world_builder.hpp"
+ #include "sample_physics_3d.hpp"
++#include "sample_spatial_query.hpp"
+ 
+ #include <rain/app/application.hpp>
+ #include <rain/core/log.hpp>
+@@ -61,7 +62,12 @@
+ 
+ class sample_layer final : public layer {
+ public:
+-    explicit sample_layer(u64 frame_limit) : frame_limit_(frame_limit) {}
++    explicit sample_layer(u64 frame_limit,bool query_smoke=false) : frame_limit_(frame_limit) {
++        queries_.smoke_mode=query_smoke;
++    }
++    [[nodiscard]] bool query_smoke_passed() const {
++        return queries_.query_count>=180 && queries_.smoke_modes_hit==7;
++    }
+ 
+     void on_attach(application_context& context) override {
+         bind_input_actions(*context.input);
+@@ -73,6 +79,15 @@
+         renderer_3d_=std::make_unique<render_system_3d>(
+             *context.renderer, *context.meshes_3d, *context.materials_3d);
+         handles_3d_=sample_3d::build_sample_3d_world(w, {cube_mesh_,cube_material_,sphere_mesh_});
++        queries_.physics=&physics_.simulation;
++        queries_.window=context.main_window;queries_.renderer=context.renderer;queries_.input=context.input;
++        queries_.camera=handles_3d_.camera;queries_.smoke_target=handles_3d_.frozen_cube;
++        query_material_=context.materials_3d->create(material_3d_desc{
++            .name="query.preview", .roughness_factor=0.85f, .blend_mode=render_blend_mode::alpha});
++        queries_.initialize(w,{cube_mesh_,query_material_,sphere_mesh_});
++        context.scheduler->add_system({.system_name="sample.mouse_picking_and_sweep", .owner_name="sample_2d_action",
++            .phase=system_phase::post_update, .priority=50, .entity_query={},
++            .function=sample_3d::spatial_query_demo::run, .user_data=&queries_});
+         physics_.log_events=true;
+         sample_3d::register_sample_3d_systems(*context.scheduler, physics_, context.input);
+         context.scheduler->add_system({.system_name="system.render_prepare_3d", .owner_name="sample_2d_action",
+@@ -104,6 +119,7 @@
+         log_info("Orange sphere turns cyan with state.in_trigger while crossing the red trigger; enter/exit events are logged.");
+         log_info("White cube ignores the cyan platform by collision mask, but lands on the ground. L toggles platform collisions.");
+         log_info("Front cubes: copper=high friction, ice-blue=low friction; identical speed 3, zero damping. C replays the slide comparison.");
++        log_info("Mouse: left click selects (yellow); 1 ray / 2 sphere sweep / 3 box sweep; I toggles trigger queries. White point=hit, orange=normal.");
+         log_info("WASD move; Q/E down/up; arrows look; Shift boost; Esc quit.");
+         log_info("Space launch blue; F freeze blue; V release/freeze yellow; G purple gravity; T platform solidity.");
+         log_info("P toggle blue physics.disabled; R reset scene + camera; Tab show/hide 2D; H hide/show green 2D rectangle; B freeze 2D movement.");
+@@ -119,6 +135,7 @@
+         if (input.is_pressed(string_id{"demo.reset"})) {
+             sample_3d::reset_sample_3d_world(w,handles_3d_);
+             physics_.reset(w);
++            queries_.reset(w);
+         }
+         if (input.is_pressed(string_id{"demo.friction"}))
+             sample_3d::restart_friction_demo(w,handles_3d_);
+@@ -170,10 +187,15 @@
+             ", vx="+std::to_string(w.get_component<velocity_3d_component>(handles_3d_.rough_cube).linear.x)+
+             "; slippery x="+std::to_string(w.get_component<transform_3d_component>(handles_3d_.slippery_cube).position.x)+
+             ", vx="+std::to_string(w.get_component<velocity_3d_component>(handles_3d_.slippery_cube).linear.x));
++        log_info("Spatial queries="+std::to_string(queries_.query_count)+", snapshot colliders="+
++            std::to_string(physics_.simulation.queries().collider_count())+
++            ", smoke modes hit="+std::to_string(queries_.smoke_modes_hit));
++        queries_.reset(*context.target_world);
+         renderer_2d_.reset();
+         renderer_3d_.reset();
+         context.materials->destroy(solid_material_);
+         context.materials->destroy(image_material_);
++        context.materials_3d->destroy(query_material_);
+         context.materials_3d->destroy(cube_material_);
+         context.meshes_3d->destroy(cube_mesh_);
+         context.meshes_3d->destroy(sphere_mesh_);
+@@ -198,6 +220,10 @@
+         input.bind_axis(string_id{"camera.look_y"},key_code::up,-1);
+         input.bind_axis(string_id{"camera.look_y"},key_code::down,1);
+         input.bind_button(string_id{"camera.boost"},key_code::left_shift);
++        input.bind_button(string_id{"query.ray"},key_code::key_1);
++        input.bind_button(string_id{"query.sphere"},key_code::key_2);
++        input.bind_button(string_id{"query.box"},key_code::key_3);
++        input.bind_button(string_id{"query.triggers"},key_code::i);
+         input.bind_button(string_id{"app.quit"},key_code::escape);
+         input.bind_button(string_id{"demo.launch"},key_code::space);
+         input.bind_button(string_id{"demo.freeze"},key_code::f);
+@@ -214,12 +240,13 @@
+     }
+ 
+     sample_3d::physics_demo_systems physics_;
++    sample_3d::spatial_query_demo queries_;
+     sample_3d::sample_3d_world_handles handles_3d_;
+     sample_2d::sample_2d_world_handles handles_2d_;
+     std::unique_ptr<render_system_3d> renderer_3d_;
+     std::unique_ptr<render_system_2d> renderer_2d_;
+     mesh_3d_handle cube_mesh_,sphere_mesh_;
+-    material_3d_handle cube_material_;
++    material_3d_handle cube_material_,query_material_;
+     material_2d_handle solid_material_,image_material_;
+     camera_2d camera_2d_;
+     u64 frame_limit_=0;
+@@ -230,10 +257,13 @@
+ int main(int argc,char** argv) {
+     if (argc==2 && std::string_view{argv[1]}=="--physics-test")
+         return sample_3d::run_physics_sample_tests();
+-    rain::u64 frame_limit=0;
+-    if (argc!=1) {
++    if (argc==2 && std::string_view{argv[1]}=="--spatial-test")
++        return sample_3d::run_spatial_query_tests();
++    const bool query_smoke=argc==2 && std::string_view{argv[1]}=="--query-smoke";
++    rain::u64 frame_limit=query_smoke ? 180 : 0;
++    if (argc!=1 && !query_smoke) {
+         if (argc!=3 || std::string_view{argv[1]}!="--frames") {
+-            std::fprintf(stderr,"Usage: sample_2d_action [--physics-test | --frames N]\n");
++            std::fprintf(stderr,"Usage: sample_2d_action [--physics-test | --spatial-test | --query-smoke | --frames N]\n");
+             return 2;
+         }
+         const std::string_view number{argv[2]};
+@@ -243,9 +273,16 @@
+             return 2;
+         }
+     }
+-    rain::application app({.title="Rain Engine - Physics World | WASD + arrows | Space F V G T P L | C friction | R reset | Tab 2D",
++    rain::application app({.title="Rain Engine - Spatial Query | Click select | 1 Ray 2 Sphere 3 Box | I triggers | WASD + arrows | R reset",
+         .width=1280, .height=720, .resizable=true,
+         .clear_color={.r=0.06f,.g=0.08f,.b=0.13f,.a=1}});
+-    app.push_layer(std::make_unique<sample_layer>(frame_limit));
+-    return app.run();
+-}
++    auto sample=std::make_unique<sample_layer>(frame_limit,query_smoke);
++    auto* sample_result=sample.get();
++    app.push_layer(std::move(sample));
++    const int result=app.run();
++    if (query_smoke && !sample_result->query_smoke_passed()) {
++        std::fprintf(stderr,"Spatial graphical smoke failed to hit target in all three modes\n");
++        return 1;
++    }
++    return result;
++}
+--- a/samples/sample_2d_action/CMakeLists.txt
++++ b/samples/sample_2d_action/CMakeLists.txt
+@@ -5,6 +5,9 @@
+         src/main.cpp
+         src/sample_physics_3d.cpp
+         src/sample_physics_world_tests.cpp
++        src/sample_spatial_query.cpp
++        src/sample_spatial_query.hpp
++        src/sample_spatial_query_tests.cpp
+         src/sample_physics_3d.hpp
+         src/sample_2d_world_builder.cpp
+         src/sample_2d_world_builder.hpp
+@@ -26,6 +29,11 @@
+ rain_apply_common_options(sample_2d_action)
+ rain_set_project_warnings(sample_2d_action)
+ if(rain_build_tests)
++    add_test(NAME rain_spatial_query_regressions COMMAND sample_2d_action --spatial-test)
++    set_tests_properties(rain_spatial_query_regressions PROPERTIES
++        TIMEOUT 30
++        LABELS "physics;spatial_query;picking;sample"
++    )
+     add_test(NAME rain_physics_v0_regressions COMMAND sample_2d_action --physics-test)
+     set_tests_properties(rain_physics_v0_regressions PROPERTIES
+         TIMEOUT 30
+--- /dev/null
++++ b/samples/sample_2d_action/src/sample_spatial_query_tests.cpp
+@@ -0,0 +1,375 @@
++#include "sample_spatial_query.hpp"
++#include "sample_physics_3d.hpp"
++#include <rain/render/picking_3d.hpp>
++#include <rain/render/mesh_3d_component.hpp>
++#include <rain/runtime/local_matrix_3d_component.hpp>
++#include <rain/runtime/rigid_body_3d_component.hpp>
++#include <rain/runtime/transform_3d_component.hpp>
++#include <rain/runtime/velocity_3d_component.hpp>
++#include <algorithm>
++#include <cmath>
++#include <cstdio>
++#include <limits>
++#include <random>
++
++namespace sample_3d {
++namespace {
++using namespace rain;
++struct tests {
++    int checks=0,failures=0;
++    void check(bool condition,const char* name) {
++        ++checks;if (!condition) { ++failures;std::fprintf(stderr,"FAIL: %s\n",name); }
++    }
++};
++bool near(f32 a,f32 b,f32 tolerance=0.0002f) { return std::abs(a-b)<=tolerance; }
++bool near(vec3 a,vec3 b,f32 tolerance=0.0002f) {
++    return near(a.x,b.x,tolerance) && near(a.y,b.y,tolerance) && near(a.z,b.z,tolerance);
++}
++entity_id collider(world& w,vec3 position,collider_shape_3d shape=collider_shape_3d::box,
++    vec3 half={1,1,1},f32 radius=1) {
++    const auto e=w.create_entity();
++    w.add_component<transform_3d_component>(e,transform_3d_component{.position=position});
++    w.add_component<collider_3d_component>(e,collider_3d_component{.shape=shape,.half_extents=half,.radius=radius});
++    return e;
++}
++void ray_and_filter_tests(tests& t) {
++    world w;spatial_query_3d scene;
++    const auto box=collider(w,{0,0,5});
++    const auto sphere=collider(w,{0,0,10},collider_shape_3d::sphere);
++    scene.sync(w);
++    const ray_3d ray{{0,0,0},{0,0,8},20};
++    auto hit=scene.raycast(ray);
++    t.check(hit && hit->entity==box && near(hit->distance,4) && near(hit->fraction,0.2f),"ray chooses closest using world-unit distances");
++    t.check(hit && near(hit->point,{0,0,4}) && near(hit->normal,{0,0,-1}) && !hit->started_overlapping,"ray point and outward normal");
++    std::vector<spatial_query_hit_3d> all;
++    scene.raycast_all(ray,all);
++    t.check(all.size()==2 && all[0].entity==box && all[1].entity==sphere && near(all[1].distance,9),"all hits sorted nearest first");
++    t.check(scene.raycast_any(ray),"any hit");
++    t.check(!scene.raycast({{0,0,0},{0,0,-1},20}),"backward ray misses");
++    t.check(!scene.raycast({{2,0,0},{0,0,1},20}),"parallel ray outside slab misses");
++    t.check(!scene.raycast({{0,0,0},{0,0,1},3.99f}),"max distance clips before hit");
++    t.check(scene.raycast({{0,0,0},{0,0,1},4}).has_value(),"endpoint contact included");
++    t.check(scene.raycast({{1,0,0},{0,0,1},20}).has_value(),"ray along box face included");
++    hit=scene.raycast({{0,0,5},{1,0,0},2});
++    t.check(hit && hit->started_overlapping && hit->distance==0 && near(length(hit->normal),1),"inside ray returns initial contact");
++    hit=scene.raycast({{0,0,5},{},0});
++    t.check(hit && hit->entity==box && hit->fraction==0,"zero travel accepts zero direction");
++    spatial_query_filter_3d filter;
++    filter.ignored_entities={box};
++    hit=scene.raycast(ray,filter);
++    t.check(hit && hit->entity==sphere,"ignored entity does not block farther hit");
++    w.add_tag(box,tag_id{"physics.trigger"});
++    scene.sync(w);
++    t.check(scene.raycast(ray)->entity==sphere,"triggers excluded by default");
++    filter={};filter.triggers=query_trigger_mode_3d::include;
++    t.check(scene.raycast(ray,filter)->entity==box && scene.raycast(ray,filter)->trigger,"include trigger");
++    filter.triggers=query_trigger_mode_3d::only;
++    scene.raycast_all(ray,all,filter);
++    t.check(all.size()==1 && all[0].entity==box,"only trigger");
++    w.add_component<collision_filter_3d_component>(box,collision_filter_3d_component{
++        .layer=collision_layer_3d::enemy,.mask=collision_layer_3d::player});
++    scene.sync(w);
++    filter.layer_mask=collision_layer_3d::world;
++    t.check(!scene.raycast(ray,filter),"query layer mask");
++    filter.layer_mask=collision_layer_3d::enemy;
++    t.check(scene.raycast(ray,filter).has_value(),"query ignores target simulation mask by default");
++    filter.source_layer=collision_layer_3d::projectile;
++    t.check(!scene.raycast(ray,filter),"optional bilateral mask rejects");
++    filter.source_layer=collision_layer_3d::player;
++    t.check(scene.raycast(ray,filter).has_value(),"optional bilateral mask accepts");
++    w.add_tag(box,tag_id{"target.selectable"});w.add_tag(box,tag_id{"team.red"});scene.sync(w);
++    filter.tags.require_all(tag_id{"target.selectable"}).require_any(tag_id{"team.red"}).require_any(tag_id{"team.blue"});
++    t.check(scene.raycast(ray,filter).has_value(),"all and any Tag conditions");
++    filter.tags.reject(tag_id{"team.red"});
++    t.check(!scene.raycast(ray,filter),"none Tag condition");
++    filter.tags.clear();filter.tags.require_all(tag_id{"target"});
++    t.check(!scene.raycast(ray,filter),"Tag dotted names do not imply prefix matching");
++    w.add_tag(sphere,tag_id{"physics.disabled"});w.set_entity_active(box,false);scene.sync(w);
++    t.check(scene.collider_count()==0 && !scene.raycast_any(ray),"disabled and inactive excluded");
++    scene.raycast_all(ray,all);
++    t.check(all.empty(),"miss clears reused output");
++    world tied;
++    for (int i=0;i<17;++i) collider(tied,{0,0,5});
++    scene.sync(tied);scene.raycast_all(ray,all);
++    bool stable=all.size()==17;
++    for (usize i=1;i<all.size();++i) stable &= all[i-1].entity.index<all[i].entity.index;
++    t.check(stable && scene.raycast(ray)->entity==all.front().entity,"BVH ties ordered by full entity id");
++    t.check(scene.node_count()>1,"nontrivial query tree constructed");
++}
++void sweep_and_overlap_tests(tests& t) {
++    world w;spatial_query_3d scene;
++    auto target=collider(w,{0,0,5});scene.sync(w);
++    auto hit=scene.sweep_sphere({{0,0,0},0.5f},{0,0,7},20);
++    t.check(hit && near(hit->distance,3.5f) && near(hit->point,{0,0,4}) && near(hit->normal,{0,0,-1}),"sphere sweep hits box face at analytic time");
++    hit=scene.sweep_box({{0,0,0},{0.5f,0.5f,0.5f}},{0,0,1},20);
++    t.check(hit && near(hit->distance,3.5f) && near(hit->point,{0,0,4}),"box sweep hits box at analytic time");
++    auto& transform=w.get_component<transform_3d_component>(target);transform.position={};scene.sync(w);
++    t.check(!scene.sweep_sphere({{-5,1.45f,1.45f},0.5f},{1,0,0},10),"rounded corner rejects expanded-AABB false positive");
++    hit=scene.sweep_sphere({{-5,1.3f,1.3f},0.5f},{1,0,0},10);
++    t.check(hit && near(hit->distance,4-std::sqrt(0.25f-0.18f)) && near(hit->point,{-1,1,1}),"sphere corner hit matches analytic root");
++    t.check(hit && near(length(hit->normal),1) && hit->normal.x<0 && hit->normal.y>0,"corner normal is geometric");
++    hit=scene.sweep_sphere({{-5,1.5f,0},0.5f},{1,0,0},10);
++    t.check(hit && near(hit->distance,4) && near(hit->normal,{0,1,0}),"tangent sphere-edge contact");
++    t.check(!scene.sweep_sphere({{-5,1.501f,0},0.5f},{1,0,0},10),"near tangent miss");
++    hit=scene.sweep_sphere({{0,0,0},0.5f},{1,0,0},10);
++    t.check(hit && hit->started_overlapping && hit->distance==0 && near(length(hit->normal),1),"initial sphere-box penetration is explicit");
++    std::vector<spatial_query_hit_3d> hits;
++    scene.overlap_sphere({{1.3f,1.3f,0},0.5f},hits);
++    t.check(hits.size()==1 && hits[0].entity==target,"sphere overlap edge");
++    scene.overlap_sphere({{1.45f,1.45f,0},0.5f},hits);
++    t.check(hits.empty(),"overlap rejects diagonal false positive");
++    scene.overlap_box({{2,0,0},{1,1,1}},hits);
++    t.check(hits.size()==1 && hits[0].started_overlapping,"box overlap touching inclusive");
++    scene.overlap_box({{2.001f,0,0},{1,1,1}},hits);
++    t.check(hits.empty(),"separated box overlap misses");
++    auto& shape=w.get_component<collider_3d_component>(target);shape.shape=collider_shape_3d::sphere;scene.sync(w);
++    hit=scene.sweep_sphere({{-5,0,0},0.5f},{1,0,0},10);
++    t.check(hit && near(hit->distance,3.5f) && near(hit->point,{-1,0,0}),"sphere-sphere sweep and target witness");
++    hit=scene.sweep_box({{-5,0,0},{0.5f,0.5f,0.5f}},{1,0,0},10);
++    t.check(hit && near(hit->distance,3.5f) && near(hit->normal,{-1,0,0}) && near(hit->point,{-1,0,0}),"box-sphere relative cast reverses normal correctly");
++    hit=scene.sweep_box({{-5,1.3f,1.3f},{0.5f,0.5f,0.5f}},{1,0,0},10);
++    t.check(!hit,"box-sphere rounded corner miss");
++    hit=scene.sweep_box({{-5,1.1f,1.1f},{0.5f,0.5f,0.5f}},{1,0,0},10);
++    t.check(hit && near(hit->distance,4.5f-std::sqrt(0.28f)),"box-sphere corner root");
++    hit=scene.raycast({{-5,1,0},{1,0,0},10});
++    t.check(hit && near(hit->distance,5) && near(hit->normal,{0,1,0}),"ray-sphere tangent");
++    shape.shape=collider_shape_3d::box;shape.half_extents={0.001f,1,1};scene.sync(w);
++    hit=scene.sweep_sphere({{-1000,0,0},0.01f},{1,0,0},2000);
++    t.check(hit && near(hit->distance,999.989f,0.0003f),"long sweep does not tunnel through thin box");
++    shape.half_extents={};scene.sync(w);
++    hit=scene.raycast({{-5,0,0},{1,0,0},10});
++    t.check(hit && near(hit->distance,5),"zero-size target point is supported");
++    world many;
++    collider(many,{0,0,5});collider(many,{0,0,10},collider_shape_3d::sphere);scene.sync(many);
++    scene.sweep_sphere_all({{},0.5f},{0,0,1},20,hits);
++    t.check(hits.size()==2 && near(hits[0].distance,3.5f) && near(hits[1].distance,8.5f),"sphere all-hit sweep sorted");
++    scene.sweep_box_all({{},{0.5f,0.5f,0.5f}},{0,0,1},20,hits);
++    t.check(hits.size()==2 && near(hits[0].distance,3.5f) && near(hits[1].distance,8.5f),"box all-hit sweep sorted");
++    t.check(scene.sweep_sphere_any({{},0.5f},{0,0,1},20) && !scene.sweep_sphere_any({{},0.5f},{0,0,-1},20),"sphere any sweep hit and miss");
++    t.check(scene.sweep_box_any({{},{0.5f,0.5f,0.5f}},{0,0,1},20) && !scene.sweep_box_any({{},{0.5f,0.5f,0.5f}},{0,0,-1},20),"box any sweep hit and miss");
++    t.check(scene.overlap_sphere_any({{0,0,5},0.5f}) && !scene.overlap_sphere_any({{},0.5f}),"sphere any overlap hit and miss");
++    t.check(scene.overlap_box_any({{0,0,5},{0.5f,0.5f,0.5f}}) && !scene.overlap_box_any({{},{0.5f,0.5f,0.5f}}),"box any overlap hit and miss");
++}
++void snapshot_and_input_tests(tests& t) {
++    world w;physics_world_3d physics;
++    auto target=collider(w,{0,0,5});physics.sync_queries(w);
++    const ray_3d ray{{},{0,0,1},30};
++    const auto revision=physics.queries().revision();
++    w.get_component<transform_3d_component>(target).position.z=10;
++    t.check(near(physics.queries().raycast(ray)->distance,4),"snapshot stays stable until explicit sync");
++    physics.sync_queries(w);
++    t.check(near(physics.queries().raycast(ray)->distance,9) && physics.queries().revision()>revision,"sync captures local edits without simulation");
++    const auto parent=w.create_entity();
++    w.add_component<transform_3d_component>(parent,transform_3d_component{.position={0,0,5},.scale={2,2,2}});
++    w.get_component<transform_3d_component>(target).position={0,0,2};w.set_parent(target,parent);
++    w.add_tag(target,tag_id{"transform.inherit_parent"});physics.sync_queries(w);
++    auto hit=physics.queries().raycast(ray);
++    t.check(hit && near(hit->distance,7),"parent scale and translation use fresh hierarchy");
++    w.add_tag(parent,tag_id{"physics.disabled"});physics.sync_queries(w);
++    t.check(!physics.queries().raycast(ray),"inherited physics.disabled excludes child");
++    w.remove_tag(parent,tag_id{"physics.disabled"});w.add_tag(parent,tag_id{"team.red"});physics.sync_queries(w);
++    spatial_query_filter_3d filter;filter.tags.require_all(tag_id{"team.red"});
++    t.check(!physics.queries().raycast(ray,filter),"query Tags remain local, not entity inheritance");
++    w.add_component<local_matrix_3d_component>(target,local_matrix_3d_component{.matrix=make_translation({0,0,4})});physics.sync_queries(w);
++    t.check(near(physics.queries().raycast(ray)->distance,11),"local matrix override shared with simulation");
++    w.destroy_entity(target);
++    const auto recycled=collider(w,{0,0,6});
++    t.check(recycled.index==target.index && recycled.generation!=target.generation,"generation reuse test setup");
++    physics.sync_queries(w);filter={};filter.ignored_entities={target};
++    hit=physics.queries().raycast(ray,filter);
++    t.check(hit && hit->entity==recycled,"old ignored id does not exclude recycled entity");
++    physics.reset();t.check(physics.queries().collider_count()==0 && !physics.queries().raycast(ray),"reset clears query snapshot");
++    const f32 nan=std::numeric_limits<f32>::quiet_NaN(),inf=std::numeric_limits<f32>::infinity();
++    physics.sync_queries(w);
++    const auto& scene=physics.queries();
++    t.check(!scene.raycast({{},{},1}),"zero direction with positive travel rejected");
++    t.check(!scene.raycast({{},{0,0,1},-1}),"negative distance rejected");
++    t.check(!scene.raycast({{nan,0,0},{0,0,1},10}) && !scene.raycast({{},{inf,0,0},10}),"nonfinite origin and direction rejected");
++    t.check(!scene.raycast({{},{0,0,1},inf}),"infinite range rejected explicitly");
++    t.check(!scene.sweep_sphere({{},-1},{0,0,1},10) && !scene.sweep_sphere({{},nan},{0,0,1},10),"invalid query radius rejected");
++    t.check(!scene.sweep_box({{},{-1,1,1}},{0,0,1},10),"negative query half extents rejected");
++    t.check(scene.raycast({{},{0,0,std::numeric_limits<f32>::max()},10}).has_value(),"huge finite direction normalized safely");
++    t.check(scene.raycast({{},{0,0,1e-20f},10}).has_value(),"tiny nonzero direction normalized safely");
++    std::vector<spatial_query_hit_3d> hits(1);
++    scene.sweep_box_all({{},{nan,1,1}},{0,0,1},10,hits);t.check(hits.empty(),"invalid request clears output");
++    const auto invalid=collider(w,{inf,0,0});
++    w.get_component<collider_3d_component>(invalid).radius=nan;physics.sync_queries(w);
++    t.check(physics.queries().collider_count()==1,"nonfinite collider excluded from BVH");
++    // Test post-solver sync: a dynamic body is moved out of a static overlap.
++    world simulated;const auto floor=collider(simulated,{0,-1,0});
++    const auto body=collider(simulated,{0,0.25f,0},collider_shape_3d::box,{0.5f,0.5f,0.5f});
++    simulated.add_tag(body,tag_id{"physics.dynamic"});
++    simulated.add_component<rigid_body_3d_component>(body);
++    simulated.add_component<velocity_3d_component>(body);
++    physics.reset();physics.step(simulated,1.0f/120,0);
++    filter={};filter.ignored_entities={floor};
++    hit=physics.queries().raycast({{0,5,0},{0,-1,0},10},filter);
++    t.check(hit && near(hit->distance,4),"physics step publishes post-solver transforms");
++    const auto events=physics.events().size();const auto position=simulated.get_component<transform_3d_component>(body).position;
++    for (int i=0;i<20;++i) (void)physics.queries().sweep_box({{0,5,0},{0.5f,0.5f,0.5f}},{0,-1,0},10);
++    t.check(physics.events().size()==events && near(simulated.get_component<transform_3d_component>(body).position,position),"queries do not simulate, move entities or emit collision events");
++    // Same scheduler as the app, with no fixed substep this frame.
++    world scheduled;event_system events_system;system_scheduler scheduler;physics_demo_systems demo;
++    auto e=collider(scheduled,{0,0,5});register_sample_3d_systems(scheduler,demo,nullptr);
++    demo.run_test_frame(scheduler,scheduled,events_system,0,0);
++    t.check(demo.step_count==0 && demo.simulation.queries().raycast(ray).has_value(),"registered query sync runs even on zero-substep frame");
++    scheduled.get_component<transform_3d_component>(e).position.z=12;
++    demo.run_test_frame(scheduler,scheduled,events_system,0,1);
++    t.check(near(demo.simulation.queries().raycast(ray)->distance,11),"frame query sync catches editor changes without stepping");
++}
++void transformed_geometry_tests(tests& t) {
++    world w;spatial_query_3d scene;
++    const auto sphere=collider(w,{0,0,10},collider_shape_3d::sphere);
++    auto& transform=w.get_component<transform_3d_component>(sphere);
++    transform.scale={-2,1,0.5f};
++    w.get_component<collider_3d_component>(sphere).center={1,0,0};scene.sync(w);
++    auto hit=scene.raycast({{-2,0,0},{0,0,1},20});
++    t.check(hit && near(hit->distance,8),"negative nonuniform scale and local sphere center");
++    w.get_component<collider_3d_component>(sphere).shape=collider_shape_3d::box;
++    w.get_component<collider_3d_component>(sphere).center={};
++    transform.scale={1,1,1};transform.rotation={0,0.78539816339f,0};scene.sync(w);
++    hit=scene.raycast({{0,0,0},{0,0,1},20});
++    t.check(hit && near(hit->distance,10-std::sqrt(2.0f)),"rotated V0 box uses conservative world AABB");
++    transform.rotation={};transform.scale={0,0,0};scene.sync(w);
++    t.check(scene.raycast({{},{0,0,1},10}).has_value(),"zero-scale target remains a queryable point");
++    // Sheared sphere scale must match the bound used by physics, not max axis length.
++    auto matrix=mat4::identity();matrix.values[0][1]=1;matrix.values[3][2]=10;
++    w.add_component<local_matrix_3d_component>(sphere,local_matrix_3d_component{.matrix=matrix});
++    w.get_component<collider_3d_component>(sphere).shape=collider_shape_3d::sphere;scene.sync(w);
++    hit=scene.raycast({{},{0,0,1},20});
++    t.check(hit && near(hit->distance,10-std::sqrt(3.0f)),"sheared sphere uses shared conservative spectral bound");
++    w.remove_component<local_matrix_3d_component>(sphere);
++    auto& shape=w.get_component<collider_3d_component>(sphere);shape.shape=collider_shape_3d::box;shape.half_extents={0.1f,1,1};
++    transform.position={10000,0,0};transform.scale={1,1,1};scene.sync(w);
++    // 9.9f itself rounds below the true entry from 10000 - 0.1f. The next
++    // representable distance reaches it while still preceding an inward-rounded BVH bound.
++    t.check(!scene.raycast({{9990,0,0},{1,0,0},9.9f}),"strict distance endpoint does not extend a short ray");
++    hit=scene.raycast({{9990,0,0},{1,0,0},std::nextafter(9.9f,10.0f)});
++    t.check(hit && near(hit->distance,9.9f),"outward-rounded BVH retains large-coordinate boundary contact");
++}
++void picking_tests(tests& t) {
++    camera_3d_frame camera;world_transform_3d_component transform;
++    camera_3d_component component{.vertical_fov_radians=1.57079632679f,.near_plane=1,.far_plane=100};
++    t.check(build_camera_frame_3d(transform,component,2,camera),"camera shared frame construction");
++    ray_3d ray;
++    t.check(screen_point_to_ray_3d(camera,{0,0,800,400},{400,200},ray) && near(ray.origin,{0,0,1}) && near(ray.direction,{0,0,1}) && near(ray.max_distance,99,0.001f),"center picking ray near/far clip segment");
++    t.check(screen_point_to_ray_3d(camera,{50,80,800,400},{450,280},ray) && near(ray.direction,{0,0,1}),"viewport offset handled");
++    t.check(screen_point_to_ray_3d(camera,{0,0,800,400},{0,0},ray) && near(ray.origin,{-2,1,1}),"top-left Y flip and aspect correct");
++    const auto first=ray;
++    t.check(screen_point_to_ray_3d(camera,{0,0,1600,800},{0,0},ray) && near(ray.origin,first.origin),"same normalized position independent of pixel scale");
++    t.check(!screen_point_to_ray_3d(camera,{0,0,800,400},{800,200},ray) && ray.max_distance==0,"right edge outside and resets result");
++    t.check(!screen_point_to_ray_3d(camera,{0,0,800,400},{200,-1},ray),"outside pointer rejected");
++    t.check(!screen_point_to_ray_3d(camera,{0,0,0,400},{0,0},ray),"minimized viewport rejected");
++    const auto valid=camera;
++    camera.view_projection={};t.check(!screen_point_to_ray_3d(camera,{0,0,800,400},{400,200},ray),"singular matrix rejected");
++    camera=valid;camera.view_projection.values[0][0]=std::numeric_limits<f32>::quiet_NaN();
++    t.check(!screen_point_to_ray_3d(camera,{0,0,800,400},{400,200},ray),"nonfinite matrix rejected");
++    transform.position={5,2,-3};transform.forward={1,0,0};
++    t.check(build_camera_frame_3d(transform,component,2,camera) &&
++        screen_point_to_ray_3d(camera,{0,0,800,400},{400,200},ray) && near(ray.origin,{6,2,-3}) && near(ray.direction,{1,0,0}),"rotated translated camera ray matches rendering basis");
++    transform.up={1,0,0};t.check(!build_camera_frame_3d(transform,component,2,camera),"degenerate camera basis rejected");
++    // Generic inverse also handles orthographic view_projection (D3D depth 0..1).
++    camera.view_projection=mat4::identity();camera.view_projection.values[0][0]=0.5f;
++    camera.view_projection.values[2][2]=0.1f;
++    t.check(screen_point_to_ray_3d(camera,{0,0,800,400},{600,100},ray) && near(ray.origin,{1,0.5f,0}) && near(ray.direction,{0,0,1}) && near(ray.max_distance,10),"orthographic unprojection supported");
++    world w;physics_world_3d physics;
++    const auto entity=collider(w,{0,0,5});
++    w.add_component<mesh_3d_component>(entity,mesh_3d_component{.mesh={},.material={},.tint={0.2f,0.3f,0.4f,1}});
++    w.add_tag(entity,tag_id{"object.renderable"});physics.sync_queries(w);
++    spatial_query_demo demo;demo.physics=&physics;demo.log_selection=false;demo.initialize(w,{});
++    ray={{},{0,0,1},20};demo.evaluate(w,&ray,true);
++    t.check(demo.selected==entity && w.tag_count(entity,tag_id{"state.selected"})==1 && demo.last_hit.has_value(),"sample click selects through shared query API");
++    demo.evaluate(w,&ray,true);
++    t.check(w.tag_count(entity,tag_id{"state.selected"})==1,"repeated click does not leak reference-counted selection Tag");
++    demo.mode=spatial_demo_mode::sphere;demo.evaluate(w,&ray,false);
++    t.check(demo.last_hit && near(demo.last_hit->distance,3.55f),"sample sphere preview uses sweep distance");
++    demo.mode=spatial_demo_mode::box;demo.evaluate(w,&ray,false);
++    t.check(demo.last_hit && near(demo.last_hit->distance,3.55f),"sample box preview uses sweep distance");
++    physics.sync_queries(w);
++    t.check(physics.queries().collider_count()==1,"visual markers never enter physics query scene");
++    ray.direction={0,1,0};demo.evaluate(w,&ray,true);
++    t.check(!demo.selected.is_valid() && !w.has_tag(entity,tag_id{"state.selected"}) && near(w.get_component<mesh_3d_component>(entity).tint.x,0.2f),"miss clears selection and restores original tint");
++    ray.direction={0,0,1};demo.evaluate(w,&ray,true);demo.reset(w);
++    t.check(!demo.selected.is_valid() && !w.has_tag(entity,tag_id{"state.selected"}),"reset clears demo-owned selection state");
++    const auto parent=w.create_entity();w.set_parent(entity,parent);w.add_tag(parent,tag_id{"render.hidden"});
++    physics.sync_queries(w);demo.evaluate(w,&ray,true);
++    t.check(!demo.last_hit && !demo.selected.is_valid(),"hidden ancestor prevents picking");
++    w.remove_tag(parent,tag_id{"render.hidden"});physics.sync_queries(w);demo.evaluate(w,&ray,true);
++    w.remove_component<collider_3d_component>(entity);physics.sync_queries(w);demo.evaluate(w,nullptr,false);
++    t.check(!demo.selected.is_valid() && !w.has_tag(entity,tag_id{"state.selected"}),"removing collider clears selection and owned Tag");
++}
++// Independent continuous oracle: convex squared-distance minimization, then
++// bisection for first entry. It does not use slabs, BVH or piecewise polynomials.
++std::optional<double> oracle(vec3 origin,vec3 direction,vec3 center,vec3 extent,double radius,double travel) {
++    const auto distance=[&](double time) {
++        const double x=std::max(std::abs(origin.x+direction.x*time-center.x)-extent.x,0.0);
++        const double y=std::max(std::abs(origin.y+direction.y*time-center.y)-extent.y,0.0);
++        const double z=std::max(std::abs(origin.z+direction.z*time-center.z)-extent.z,0.0);
++        return x*x+y*y+z*z-radius*radius;
++    };
++    if (distance(0)<=0) return 0;
++    double lo=0,hi=travel;
++    for (int i=0;i<100;++i) {
++        const double a=lo+(hi-lo)/3,b=hi-(hi-lo)/3;
++        if (distance(a)<distance(b)) hi=b;else lo=a;
++    }
++    double inside=(lo+hi)*0.5;
++    if (distance(inside)>1e-10) return std::nullopt;
++    lo=0;hi=inside;
++    for (int i=0;i<100;++i) { const double m=(lo+hi)*0.5;if (distance(m)<=1e-12) hi=m;else lo=m; }
++    return hi;
++}
++void randomized_tests(tests& t) {
++    std::mt19937 random(0x51a7u);
++    std::uniform_real_distribution<f32> position(-4,4),size(0.1f,1.4f);
++    for (int kind=0;kind<4;++kind) for (int iteration=0;iteration<100;++iteration) {
++        world w;spatial_query_3d scene;
++        const vec3 center{position(random),position(random),position(random)};
++        const vec3 half{size(random),size(random),size(random)};
++        const f32 target_radius=size(random),query_radius=size(random);
++        const vec3 query_half{size(random),size(random),size(random)};
++        const bool target_sphere=(kind&1)!=0,query_sphere=(kind&2)==0;
++        collider(w,center,target_sphere ? collider_shape_3d::sphere : collider_shape_3d::box,half,target_radius);
++        scene.sync(w);
++        const vec3 origin{position(random),position(random),position(random)};
++        const vec3 direction=normalize(vec3{position(random),position(random),position(random)});
++        const auto actual=query_sphere ? scene.sweep_sphere({origin,query_radius},direction,12) :
++            scene.sweep_box({origin,query_half},direction,12);
++        std::optional<double> expected;
++        if (query_sphere) expected=oracle(origin,direction,center,target_sphere ? vec3{} : half,
++            query_radius+(target_sphere ? target_radius : 0),12);
++        else if (target_sphere) expected=oracle(center,-direction,origin,query_half,target_radius,12);
++        else expected=oracle(origin,direction,center,half+query_half,0,12);
++        t.check(actual.has_value()==expected.has_value() && (!actual || near(actual->distance,static_cast<f32>(*expected),0.001f)),
++            "randomized sweep versus independent convex-distance oracle");
++    }
++    // Cross-check tree pruning and all-hit order against isolated target scenes.
++    world w;std::vector<vec3> centers;
++    for (int i=0;i<128;++i) {
++        centers.push_back({position(random)*3,position(random)*3,position(random)*3});
++        collider(w,centers.back(),i%2==0 ? collider_shape_3d::box : collider_shape_3d::sphere);
++    }
++    spatial_query_3d tree;tree.sync(w);
++    for (int trial=0;trial<30;++trial) {
++        ray_3d ray{{position(random),position(random),-18},normalize(vec3{position(random)*0.1f,position(random)*0.1f,1}),40};
++        std::vector<spatial_query_hit_3d> actual;tree.raycast_all(ray,actual);
++        std::vector<std::pair<f32,u32>> expected;
++        for (u32 i=0;i<centers.size();++i) {
++            const auto hit=oracle(ray.origin,ray.direction,centers[i],i%2==0 ? vec3{1,1,1} : vec3{},i%2==0 ? 0 : 1,ray.max_distance);
++            if (hit) expected.emplace_back(static_cast<f32>(*hit),i);
++        }
++        std::sort(expected.begin(),expected.end());
++        bool matches=actual.size()==expected.size();
++        if (matches) for (usize i=0;i<actual.size();++i)
++            matches &= actual[i].entity.index==expected[i].second && near(actual[i].distance,expected[i].first,0.001f);
++        t.check(matches,"BVH raycast all matches independent brute-force oracle");
++    }
++}
++}
++int run_spatial_query_tests() {
++    tests t;
++    ray_and_filter_tests(t);sweep_and_overlap_tests(t);snapshot_and_input_tests(t);transformed_geometry_tests(t);picking_tests(t);randomized_tests(t);
++    std::printf("Spatial Query: %d checks, %d failures\n",t.checks,t.failures);
++    return t.failures==0 ? 0 : 1;
++}
++}
+--- /dev/null
++++ b/docs/Spatial_Query_V0.md
+@@ -0,0 +1,167 @@
++# Spatial Query + Raycast + Mouse Picking + Sphere/Box Sweep V0
++
++更新：2026-10-10。状态：已实现并通过本批次回归。
++
++## 1. 这一步提供什么
++
++Physics 除了推进模拟，现在还提供主动查询的空间服务。调用者复用 `physics_world_3d::queries()`，无需各自遍历 ECS 或编写相交算法。武器射线、AI 视线、相机避障和技能检测可以接入此接口；这些玩法系统本身不在本批次实现范围内。
++
++- Raycast：最近命中、任意命中、全部命中。
++- Sphere/Box Sweep：沿直线平移，返回首次接触距离；支持最近、任意、全部命中。
++- Sphere/Box Overlap：范围检测，支持任意命中、全部命中。
++- 统一过滤：目标 layer、可选双向 mask、trigger 策略、忽略实体列表、本地 Tag 的 all/any/none 条件。
++- Mouse Picking：相机与视口生成裁剪范围内的世界射线，样例演示选中、命中点、法线和 Sweep 停止位置。
++
++源文件入口：[查询 API](../engine/runtime/include/rain/runtime/spatial_query_3d.hpp)、[查询实现](../engine/runtime/src/spatial_query_3d.cpp)、[屏幕射线](../engine/render/include/rain/render/picking_3d.hpp)、[样例系统](../samples/sample_2d_action/src/sample_spatial_query.cpp)。
++
++## 2. 快照与同步约定
++
++`spatial_query_3d` 拥有独立的只读快照：实体完整 ID、世界形状、过滤数据、Tag 和 AABB 树，不保存 ECS 组件指针。同步从 Collider 组件池读取数据。没有 Rigid Body 的 Collider 同样可查询。
++
++```text
++变换 / Collider / Tag / layer 或实体生命周期发生改变
++                ↓
++physics.sync_queries(world)
++                ↓
++构造查询快照 + AABB 树
++                ↓
++同一批系统进行多次只读查询
++```
++
++- `physics_world_3d::step()` 在积分、求解和事件生成之后自动同步，查询读到求解后的姿态。
++- 初始化后、手动移动/编辑后，以及外部系统改动组件或 Tag 后，需要显式同步再查询。
++- `physics_query_sync_system_3d` 可注册到变量帧的 `post_update`，处理一帧没有固定物理步的情况。
++- 样例顺序：变换层级系统 priority 100 → 查询同步 priority 75 → 拾取 priority 50 → render_prepare。调度器数值较大的 priority 先执行。
++- 同步之前读到旧快照是明确行为，不做隐藏的按需同步。命中后若世界已经改变，使用前应检查 `world::is_alive(hit.entity)`，必要时重建快照。
++- `reset()` 清除物理状态和查询快照；`revision()` 可观察快照更新，`collider_count()` / `node_count()` 可用于调试。
++- 只读查询可并发，但必须保证没有同时执行 `sync/clear/step/reset`；各线程不得共享输出 vector 的写入。
++
++快照拥有自己的 Tag 副本；查询不会增加实体 Tag 计数、消耗 Tag 事件或生成碰撞事件。样例点击产生的 `state.selected` 属于样例交互状态，后续同步会将它纳入新快照。
++
++## 3. 调用方式
++
++```cpp
++#include <rain/runtime/physics_world_3d.hpp>
++
++// 初始化或本批 ECS 修改完成后同步一次；随后复用快照进行多次查询。
++physics.sync_queries(target_world);
++const auto& spatial = physics.queries();
++
++rain::spatial_query_filter_3d filter;
++filter.layer_mask = rain::collision_layer_3d::world |
++                    rain::collision_layer_3d::enemy;
++filter.ignored_entities.push_back(owner_entity);
++filter.triggers = rain::query_trigger_mode_3d::exclude;
++
++const auto ray_hit = spatial.raycast({
++    .origin = {0, 2, 0}, .direction = {0, 0, 1}, .max_distance = 30
++}, filter);
++
++const auto sphere_hit = spatial.sweep_sphere(
++    {{0, 2, 0}, 0.3f}, {0, 0, 1}, 10, filter);
++const auto box_hit = spatial.sweep_box(
++    {{0, 2, 0}, {0.3f, 0.5f, 0.3f}}, {0, 0, 1}, 10, filter);
++
++std::vector<rain::spatial_query_hit_3d> nearby;
++spatial.overlap_sphere({{0, 2, 0}, 3.0f}, nearby, filter);
++const bool occupied = spatial.overlap_box_any(
++    {{0, 2, 0}, {1, 1, 1}}, filter);
++```
++
++最近命中返回 `std::optional<spatial_query_hit_3d>`。`*_any` 返回 bool 并可提前停止。`*_all` 和 `overlap_*` 写入调用方可复用的 vector，先清空旧结果，按 distance、entity.index、entity.generation 排序；同一 Collider 最多返回一次。
++
++## 4. 命中结果与边界
++
++| 字段 | 语义 |
++| --- | --- |
++| `entity` | 包含 generation 的目标实体 ID |
++| `point` | 世界坐标中的目标 Collider 表面点，不是被扫掠形状的中心 |
++| `normal` | 指向查询形状的目标表面单位法线 |
++| `distance` | 从查询起点沿归一化方向移动的世界距离 |
++| `fraction` | distance / max_distance；零距离查询为 0 |
++| `started_overlapping` | 起点已经接触或重叠，包含恰好贴面；此时 distance=0 |
++| `trigger` | 此目标在快照中是否为 trigger |
++
++方向会在内部归一化。方向长度不改变查询范围。所有查询中心、尺寸、方向和最大距离必须有限；查询半径、half_extents 和距离必须非负。正距离要求非零方向，零距离允许零方向并退化为 Overlap。无效输入返回空命中/false，并清空输出列表。
++
++距离上限包含端点，但不会自动延长射线。查询使用几何接触边界，不额外加上模拟求解器的接触容差。起点包含在目标内部时，会返回稳定的代表法线/表面点；它不是最小脱离向量（MTD）或去穿透求解结果，调用方不能直接用它替代位置修正。
++
++## 5. 过滤语义
++
++| 条件 | 行为 |
++| --- | --- |
++| `layer_mask` | 与目标 `collision_filter_3d_component::layer` 有交集才参与 |
++| `source_layer == 0` | 默认不检查目标的模拟 mask，使查询与接触响应策略可以独立 |
++| `source_layer != 0` | 目标 mask 也必须接纳 source_layer，实现双向过滤 |
++| `triggers` | `exclude` 默认排除、`include` 包含、`only` 只检测 trigger |
++| `ignored_entities` | 精确匹配完整实体 ID；忽略父实体不自动忽略其子实体 |
++| `tags` | 查询快照中的实体本地 Tag；支持 all/any/none，不自动进行名称前缀或实体层级继承 |
++| 生命周期 | 非活动实体、缺少 Transform/Collider、无效几何不进入快照 |
++| `physics.disabled` | 沿实体层级检查，禁用对象不进入查询快照 |
++| `physics.trigger` | 沿实体层级检查，与模拟保持一致 |
++
++查询不要求 `physics.dynamic`、`physics.static` 或 `physics.collider` Tag。冻结、静态和运动学对象仍可查询。样例在通用查询之上额外检查渲染可见性，隐藏父节点不会遮挡后方可见对象的拾取；核心空间服务不依赖渲染模块。
++
++## 6. 几何与性能实现
++
++模拟和查询共用 `physics_geometry_3d.hpp` 中的当前世界矩阵及形状转换：局部偏移、父变换继承、local matrix override、负缩放、非均匀缩放和剪切的保守球体界限遵循同一语义。
++
++- 盒体 Collider 使用世界 AABB，与当前模拟一致；球体缩放使用保守界限。
++- Sweep 查询球体的 radius 和查询盒体的 half_extents 已是世界单位。
++- Sphere→Sphere、Sphere→Box、Box→Sphere、Box→Box 均有检测路径。
++- 球体与盒体的 Sweep 通过“点到 AABB 的平方距离”分段求解二次方程，检测面、边和角；不把扩大后的 AABB 直接当作最终命中。
++- Box→Sphere 使用相对运动反向计算，再恢复目标表面法线和点。
++- 查询采用中位数分割的 AABB 树减少精确测试候选；边界向外取一个可表示的浮点单位，避免粗筛舍入漏检。
++- 求交中间量使用 double；并不改变引擎变换和结果仍为 float 的精度范围。
++
++V0 的 `sync()` 会重建树并复制过滤/Tag 数据，构建包含 O(N log N) 工作和可能的分配；最近/任意命中不构造临时命中数组，全部命中允许调用方复用容量。它不是已经完成静态/动态分离、增量 refit 或大世界性能优化的实现。先测量实体规模和查询负载，再决定是否优化同步频率或换索引。
++
++## 7. 鼠标拾取与样例
++
++`build_camera_frame_3d()` 供渲染和拾取共用。`screen_point_to_ray_3d()` 反投影视口位置与 D3D [0,1] 深度，射线从近裁剪面开始，到远裁剪面结束；命中 distance 因而从近裁剪面计量。
++
++- 屏幕坐标和 viewport 使用同一单位，左上角为原点，支持 viewport x/y 偏移；右/下边界不属于视口。
++- 通过实际 view_projection 反投影，支持透视矩阵，也通过了正交矩阵回归；当前引擎相机组件仍为透视相机。
++- `rain_window::mouse_position_normalized()` 用 GLFW 逻辑窗口尺寸归一化鼠标，再映射到渲染像素范围；失焦、最小化或客户区外不发起拾取。
++- 无效 FOV、视口、退化相机基、不可逆/非有限矩阵均返回失败，调用方必须检查结果。
++
++运行 `sample_2d_action`：
++
++| 操作 | 效果 |
++| --- | --- |
++| 鼠标左键 | 选中最近可见 Collider，黄色高亮并持有一个 `state.selected` Tag；点击空白清除 |
++| `1` / `2` / `3` | Raycast / Sphere Sweep / Box Sweep |
++| `I` | 是否包含触发器查询 |
++| 鼠标移动 | 蓝色路径预览；Sweep 以半透明形状显示停止位置；白点是目标表面命中点，橙线是法线 |
++| `R` | 原有场景重置，并清理选中状态 |
++| WASD / Q E / 方向键 | 保留相机平移与观察 |
++
++预览长度上限为 40 世界单位，Sweep radius/half_extents 为 0.45，仅属于样例配置。标记物没有 Collider，不污染查询，也不改变原有物理测试场景。移除 Collider、销毁/禁用/隐藏选中对象会清理选择；物理触发反馈颜色在取消选择后恢复。
++
++## 8. 构建和验证
++
++```powershell
++cmake --preset gcc_debug
++cmake --build --preset build_gcc_debug -j 8
++ctest --preset test_gcc_debug --verbose
++.\build\gcc_debug\samples\sample_2d_action\sample_2d_action.exe --spatial-test
++.\build\gcc_debug\samples\sample_2d_action\sample_2d_action.exe --query-smoke
++```
++
++`rain_build_tests=ON` 且构建样例时，CTest 注册 `rain_spatial_query_regressions`。`--spatial-test` 不创建窗口；`--query-smoke` 创建图形窗口并在 180 帧内自动投影目标、切换三种模式，若未在每种模式命中目标则返回失败；图形烟测不加入默认无窗口逻辑测试。
++
++本批次 Windows / GCC Debug 验证：
++
++- 全目标构建成功；最终新增/修改代码编译无新增告警。
++- Spatial Query：532 项检查、0 失败，包含 400 组独立连续距离参考算法交叉验证，以及 30 组混合形状场景的 BVH 对照。
++- 既有 Physics sample：124 项检查、0 失败。
++- CTest：4/4 通过，包含空间查询、物理、3D 渲染与 MSAA。
++- 图形烟测：180 次查询，11 个查询 Collider，三种模式命中位集合为 7，进程返回 0；这是完整渲染路径烟测，不等同于人工视觉验收。
++
++日志在 `build/spatial_query_20261010_ctest.log`、`build/spatial_query_20261010_smoke.log` 和 `.err`。人工建议补查拖动/缩放窗口、高 DPI 显示器切换，以及贴近盒角时球体 Sweep 的命中位置。
++
++## 9. V0 范围和后续候选
++
++本次没有实现 OBB/旋转 Sweep、三角网格射线、Capsule/Convex、目标运动预测、CCD 自动积分、滑动与多次反弹解算、相机控制器避障策略或角色控制器。旋转盒体拾取的是其保守 AABB，可能早于可见网格；这是与当前物理一致的明确限制。
++
++建议下一批只选一个小目标：用 Sphere Sweep 实现实际相机避障（明确初始重叠和安全间距），或针对空间服务做碰撞体 DebugDraw/查询统计。随后再按测量考虑静态/动态索引、增量同步、批量查询；避免一次扩展到完整控制器和通用约束求解。
+--- a/README.md
++++ b/README.md
+@@ -9,11 +9,12 @@
+ ## 项目入口
+ 
+ - [项目介绍、当前能力与发展路线](PROJECT_GUIDE.md)：适合新对话、Work 和协作者阅读的项目背景。
++- [空间查询 V0：接口、同步与样例](docs/Spatial_Query_V0.md)：Raycast、Overlap、鼠标拾取和 Sphere/Box Sweep。
+ - [协作与变更交付要求](AGENTS.md)：开发和文档交付约定。
+ - [批次说明与验证记录](docs/)：具体改动、测试结果及任务 diff。
+ - [历史设计讨论](rain/rain.md)：早期思路；当前状态与路线请先看项目指南。
+ 
+-目前已经有 2D/3D 渲染、PBR、视锥剔除和带 Tag 驱动行为的 3D 物理基础；高级玩法框架与渲染能力仍在逐步完善。采用小步开发节奏，每次交付一个可理解、可验证的能力。
++目前已经有 2D/3D 渲染、PBR、视锥剔除和带 Tag 驱动行为的 3D 物理基础，以及统一的空间查询服务；高级玩法框架与渲染能力仍在逐步完善。采用小步开发节奏，每次交付一个可理解、可验证的能力。
+ 
+ ## 构建与样例
+ 
+@@ -25,7 +26,7 @@
+ ctest --preset test_gcc_debug --verbose
+ ```
+ 
+-- `sample_2d_action`：主要交互与物理验证样例，包含 3D 场景、可切换的 2D 覆盖层和 `--physics-test` 模式。
++- `sample_2d_action`：主要交互与物理验证样例，包含 3D 场景、可切换的 2D 覆盖层，支持 `--physics-test`、`--spatial-test` 和 `--query-smoke`。鼠标左键选中，1/2/3 切换 Raycast/Sphere Sweep/Box Sweep，I 切换触发器过滤。
+ - `sample_3d_pbr`：3D PBR 材质样例。
+ 
+ 模块地图、当前限制、详细路线与交接说明见 [PROJECT_GUIDE.md](PROJECT_GUIDE.md)。
+--- a/PROJECT_GUIDE.md
++++ b/PROJECT_GUIDE.md
+@@ -3,15 +3,15 @@
+ > Rain Engine 是一个以 **data-oriented** 为底层设计原则、支持 **属性与规则驱动的启发式玩法设计** 的游戏引擎。
+ > 它强调运行时效率、清晰的数据布局、可扩展的 gameplay framework，以及以 gameplay_tag 为核心的规则驱动玩法系统。设计者通过组合物体性质与规则探索玩法，快速验证和调整设计，并以强可扩展性和强大的渲染能力为长期目标。
+ 
+-更新日期：2026-10-09。本文可作为其他对话、Work 或协作者的独立项目背景材料；阅读者需要能够访问本文件。现状基于当前工作目录，包含尚未提交的摩擦扩展，不能只用某个历史提交判断。路线中的“规划”不是已实现功能，也不等于一次性开发授权。
++更新日期：2026-10-10。本文可作为其他对话、Work 或协作者的独立项目背景材料；阅读者需要能够访问本文件。现状基于当前工作目录，包含尚未提交的摩擦和空间查询扩展，不能只用某个历史提交判断。路线中的“规划”不是已实现功能，也不等于一次性开发授权。
+ 
+ ## 1. 给新对话的快速上下文
+ 
+ - **项目是什么：** 以数据组织和批处理为基础，以 Tag 表达实体性质与状态，用通用规则根据关系和上下文自动判断、组合行为的 C++ 游戏引擎。
+ - **核心辨识度：** data-oriented runtime + Tag-driven 自动交互 + 可解释的玩法迭代流程；渲染、物理和资源能力共同支撑这种流程。
+ - **“启发式设计”的含义：** 根据实体属性、状态、关系与上下文，由通用规则自动匹配并组合行为；新的对象或状态组合可以复用已有规则，设计者据此探索、验证和调整玩法。具体例子只是说明机制，不限定引擎题材或功能范围。
+-- **当前阶段：** 已有运行时骨架、2D/3D 渲染基础、PBR、视锥剔除、3D 物理 V0、碰撞事件、Tag 驱动示例及基础接触摩擦。距离完整 gameplay framework 和可生产使用的通用引擎仍有工作。
+-- **最近重点：** 小步完善物理，已经加入静摩擦和动摩擦；后续可以从空间查询、接触稳定性或调试可视化中选择一个最小目标，再逐步接入通用玩法规则。具体顺序可随需求调整。
++- **当前阶段：** 已有运行时骨架、2D/3D 渲染基础、PBR、视锥剔除、3D 物理 V0、碰撞事件、Tag 驱动示例、基础接触摩擦，以及 Raycast/Overlap/Sphere/Box Sweep 和鼠标拾取 V0。距离完整 gameplay framework 和可生产使用的通用引擎仍有工作。
++- **最近重点：** 小步完善物理，已经加入摩擦和统一空间查询服务；后续可从查询消费者（如相机避障）、接触稳定性或调试可视化中选择一个最小目标，再逐步接入通用玩法规则。具体顺序可随需求调整。
+ - **开发节奏：** 一轮集中完成一个能理解、能验证的小功能，留出思考和调整方向的时间；不因路线图涵盖多个方向就同时开工。
+ - **事实入口：** 本文用于定位与导航；具体接口、行为和可用性以源码、CMake 和当前测试为准。历史讨论在 `rain/`，批次记录在 `docs/`。
+ 
+@@ -97,10 +97,11 @@
+ | 渲染 | Windows D3D11 后端、2D 精灵、3D Mesh、Metallic-Roughness PBR、方向光、视锥剔除、MSAA 及回退 | 不应描述为已有完整阴影、IBL、骨骼动画、后处理和多图形后端 |
+ | 资源 | 图像加载、纹理/材质/网格注册、glTF 静态模型及层级实例化相关路径 | 不应等同于完整资产数据库、场景保存、Prefab、流式资源或动画导入 |
+ | 3D 物理 | 固定步积分、重力/阻尼、Box/Sphere、Broadphase、layer/mask、触发器、enter/stay/exit、基础冲量响应、静/动摩擦 | 盒体仍使用世界 AABB 近似；尚无完整 OBB、CCD、角动力学、关节、休眠和稳定多接触约束 |
+-| 样例与测试 | `sample_2d_action` 承载 2D/3D 交互与物理实验；`sample_3d_pbr` 展示材质；有物理、3D 渲染和 MSAA 回归 | 样例名称不代表仅有 2D；通过这些测试不等于整个引擎已完成全面验证 |
++| 空间服务 | AABB 树查询快照、Raycast、Sphere/Box Overlap 与 Sweep、统一过滤、鼠标拾取和命中预览 | Box 为世界 AABB；Sweep 为平移检测，不等于旋转 Sweep、网格精确拾取、CCD 或相机避障控制器；修改世界后必须同步快照 |
++| 样例与测试 | `sample_2d_action` 承载 2D/3D 交互与物理实验；`sample_3d_pbr` 展示材质；有空间查询、物理、3D 渲染和 MSAA 回归 | 样例名称不代表仅有 2D；通过这些测试不等于整个引擎已完成全面验证 |
+ | Gameplay framework | Tag 基础、事件基础，以及 Tag 控制运动/渲染/物理的实例 | 通用属性交互/规则框架、完整 Attribute、Ability、Effect、Combat 仍待实现；行为树头文件只能视为草稿 |
+ 
+-最近一次已完成批次是接触摩擦：物理样例 124 项检查零失败、CTest 3/3 通过，并完成 360 帧图形烟测。这是该批次的记录，本次文档任务没有重新运行构建；后续源码变更后应重新验证。详情见 [摩擦批次记录](docs/物理引擎小步完善01_静摩擦与动摩擦.txt)。
++最近完成统一空间查询 V0：532 项空间查询检查零失败、既有物理 124 项检查零失败、CTest 4/4 通过，并完成三种查询模式的 180 帧图形烟测。接口、同步约定和限制见 [空间查询 V0](docs/Spatial_Query_V0.md)。此前摩擦实现记录见 [摩擦批次记录](docs/物理引擎小步完善01_静摩擦与动摩擦.txt)。后续源码变化后应重新验证。
+ 
+ ### 必须区分的三种 Tag 语义
+ 
+@@ -123,7 +124,7 @@
+ | [engine/asset](engine/asset) | 图像、纹理资产和 glTF 实例化 |
+ | [engine/gameplay](engine/gameplay) | gameplay_tag 基础；未来 gameplay framework 的主要落点 |
+ | [engine/app](engine/app) | 应用生命周期、Layer、主循环和系统调度连接 |
+-| [samples/sample_2d_action](samples/sample_2d_action) | 当前主要交互/物理验证场；包含 `--physics-test` 模式 |
++| [samples/sample_2d_action](samples/sample_2d_action) | 当前主要交互/物理验证场；包含 `--physics-test`、`--spatial-test` 和 `--query-smoke` 模式 |
+ | [samples/sample_3d_pbr](samples/sample_3d_pbr) | 3D 材质展示样例 |
+ | [tests](tests) | 3D 渲染、着色器、剔除及 MSAA 自动回归 |
+ | [docs](docs) | 每批自然语言修改说明、验证记录及 diff 归档 |
+@@ -138,6 +139,8 @@
+ 5. [sample_physics_3d.cpp](samples/sample_2d_action/src/sample_physics_3d.cpp)：系统注册、事件消费与 Tag 反馈。
+ 6. [render_system_3d.cpp](engine/render/src/render_system_3d.cpp)：从 ECS 数据准备渲染命令。
+ 
++空间服务入口是 [spatial_query_3d.hpp](engine/runtime/include/rain/runtime/spatial_query_3d.hpp)，由 `physics_world_3d` 持有查询快照。
++
+ 当前物理位于 `runtime`，并没有启用独立 `engine/physics` 模块。未来是否拆模块，应在依赖和对外查询接口清晰后决定。
+ 
+ ## 5. 未来完善的八个大方向
+@@ -164,7 +167,7 @@
+ 
+ | 顺序 | 细化方向 | 具体完成标准 |
+ | --- | --- | --- |
+-| 近期 | 空间查询：Raycast / Overlap，按当前需求先选一种 | 为选取、相机、技能或范围交互提供候选；边界、过滤层、trigger、禁用/失活对象都有明确语义和测试 |
++| V0 已完成；后续接消费者 | Raycast / Overlap / Sphere/Box Sweep 与鼠标拾取；随后按需做相机避障或技能检测 | 复用统一过滤与快照接口；进一步明确消费者的初始重叠、安全间距和更新时序 |
+ | 近期 | 碰撞体、法线、速度及接触点的 Debug Draw | 可切换查看实际碰撞几何，能解释模型外观与碰撞近似的差别 |
+ | 近期至中期 | 接触稳定性：接触缓存、累计冲量、上一帧冲量复用、位置修正容差 | 多方块堆叠和运动平台场景的漂移、抖动、穿透在可接受范围内 |
+ | 中期 | 施力/冲量接口，统一世界空间与局部空间约定 | 质量、固定 dt、冻结和运动学模式下的结果可预测 |
+@@ -265,7 +268,7 @@
+ 
+ | 阶段 | 一个阶段要证明什么 | 建议先后关系 |
+ | --- | --- | --- |
+-| 当前：物理小步迭代 | 新接口容易理解，行为可以验证 | 摩擦已完成 → 按需求选择空间查询/调试可视化/接触稳定性中的一个小目标 |
++| 当前：物理小步迭代 | 新接口容易理解，行为可以验证 | 摩擦、空间查询 V0 已完成 → 按需求选择一个查询消费者/调试可视化/接触稳定性目标 |
+ | 随后：最小玩法闭环 | Tag 与规则确实提高玩法表达效率 | 明确 Tag 语义 → 最小通用规则与状态生命周期 → 选择一个小玩法检验复用 → 逐步扩展效果/技能 |
+ | 并行候选，但单独分批 | 画面和制作流程能够支撑玩法 | 独立选择阴影、动画基础或场景保存中的一项，不一次铺开 |
+ | 闭环稳定之后 | 扩展规模有可测量的收益 | 数据布局/批处理优化 → 资源规模 → 更丰富的渲染与工具能力 |
+@@ -276,7 +279,7 @@
+ 
+ | 小批次候选 | 本批只解决什么 | 完成后讨论什么 |
+ | --- | --- | --- |
+-| 一个物理查询接口 | 选择 Raycast 或 Overlap 中一种，支持现有几何近似和明确过滤语义 | 返回结果、空间/时间语义是否适合预期调用方 |
++| 一个空间查询消费者 | 基于现有接口选择相机避障、简单视线或范围检测中的一种 | 复用返回结果与过滤规则，明确快照时序和初始重叠策略 |
+ | 一项物理可视化或稳定性问题 | 选择碰撞体显示、接触法线或一个可复现的抖动问题 | 改善是否可观察、原因是否可解释、成本是否可接受 |
+ | Tag 语义整理 | 明确两套基础表达如何统一/桥接，以及状态来源如何撤销 | 是否减少重复、是否影响已有行为 |
+ | 最小通用规则 | 一个可描述的输入上下文、一组条件、一类动作和一次状态转换 | 换一组符合条件的实体能否复用，失败原因是否可追踪 |
+@@ -308,12 +311,14 @@
+ cmake --build --preset build_gcc_debug -j 8
+ ctest --preset test_gcc_debug --verbose
+ .\build\gcc_debug\samples\sample_2d_action\sample_2d_action.exe --physics-test
++.\build\gcc_debug\samples\sample_2d_action\sample_2d_action.exe --spatial-test
++.\build\gcc_debug\samples\sample_2d_action\sample_2d_action.exe --query-smoke
+ .\build\gcc_debug\samples\sample_2d_action\sample_2d_action.exe
+ ```
+ 
+ 运行命令前需要相应工具链和依赖在环境中；共享盘环境建议使用当前机器已有的仓库映射路径。不要把另一台机器的绝对路径当成项目配置。
+ 
+-当前交互入口：WASD/QE 移动相机、方向键观察、Shift 加速；Space 发射方块；F/V 冻结切换；G 重力；T 触发器/实体切换；P 禁用物理；L 碰撞层对照；C 摩擦对照重播；R 重置；Tab 显示/隐藏 2D 覆盖层。
++当前交互入口：鼠标左键选中，1/2/3 切换 Raycast/Sphere Sweep/Box Sweep，I 切换 trigger 查询；WASD/QE 移动相机、方向键观察、Shift 加速；Space 发射方块；F/V 冻结切换；G 重力；T 触发器/实体切换；P 禁用物理；L 碰撞层对照；C 摩擦对照重播；R 重置；Tab 显示/隐藏 2D 覆盖层。
+ 
+ 交接给新对话时，可以使用下面这段背景：
+ 

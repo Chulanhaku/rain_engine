@@ -3,6 +3,7 @@
 #include <rain/core/container/rain_hash_map.hpp>
 #include <rain/runtime/entity.hpp>
 #include <rain/runtime/physics_3d.hpp>
+#include <rain/runtime/spatial_query_3d.hpp>
 #include <rain/runtime/physics_broadphase_3d.hpp>
 #include <functional>
 #include <vector>
@@ -59,6 +60,10 @@ public:
     [[nodiscard]] const std::vector<collision_event_3d>& events() const;
     void clear_events();
     void reset();
+    // step() synchronizes after solving. Also sync before queries when editing,
+    // before the first step, or after component/Tag changes outside simulation.
+    void sync_queries(const world& target_world);
+    [[nodiscard]] const spatial_query_3d& queries() const;
     [[nodiscard]] const physics_world_3d_stats& stats() const;
     [[nodiscard]] physics_settings_3d& settings();
     [[nodiscard]] const physics_settings_3d& settings() const;
@@ -69,6 +74,7 @@ private:
     void finalize_collision_events(u64 fixed_tick_index);
     physics_settings_3d settings_;
     physics_broadphase_3d broadphase_;
+    spatial_query_3d queries_;
     rain_hash_map<collision_pair_key_3d,active_collision_3d,collision_pair_hash_3d> active_collisions_;
     rain_hash_map<collision_pair_key_3d,active_collision_3d,collision_pair_hash_3d> current_collisions_;
     std::vector<collision_pair_key_3d> active_pairs_;

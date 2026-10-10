@@ -32,21 +32,6 @@ namespace rain {
         static_assert(sizeof(scene_constants_3d) == 64);
         static_assert(sizeof(material_constants_3d) == 48);
 
-        camera_3d_frame build_camera_frame(const world_transform_3d_component& transform, const camera_3d_component& camera, f32 aspect_ratio) {
-            camera_3d_frame result{};
-            const vec3 forward = transform.forward;
-
-            result.vertical_fov_radians = camera.vertical_fov_radians;
-            result.aspect_ratio = aspect_ratio;
-            result.near_plane = camera.near_plane;
-            result.far_plane = camera.far_plane;
-            result.position = transform.position;
-            result.view = make_look_at_lh(transform.position, transform.position + forward, transform.up);
-            result.projection = make_perspective_fov_lh(result.vertical_fov_radians, aspect_ratio, result.near_plane, result.far_plane);
-            result.view_projection = result.view * result.projection;
-            return result;
-        }
-
         f32 unit_factor(f32 value, f32 fallback) {
             return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
         }
@@ -142,11 +127,7 @@ namespace rain {
         const auto& camera_transform = target_world.get_component<world_transform_3d_component>(camera_entity);
         const auto& camera = target_world.get_component<camera_3d_component>(camera_entity);
         const f32 aspect_ratio = static_cast<f32>(backend_->width()) / static_cast<f32>(backend_->height());
-        if (!std::isfinite(camera.vertical_fov_radians) || camera.vertical_fov_radians <= 0.0f ||
-            camera.vertical_fov_radians >= 3.14159265f || !std::isfinite(camera.near_plane) ||
-            !std::isfinite(camera.far_plane) || camera.near_plane <= 0.0f ||
-            camera.far_plane <= camera.near_plane) return;
-        camera_frame_ = build_camera_frame(camera_transform, camera, aspect_ratio);
+        if (!build_camera_frame_3d(camera_transform,camera,aspect_ratio,camera_frame_)) return;
         has_camera_ = true;
         const entity_query_result lights = target_world.query_entities(light_query_);
         light_ = lights.empty() ? directional_light_3d_component{} : target_world.get_component<directional_light_3d_component>(lights.entities.front());

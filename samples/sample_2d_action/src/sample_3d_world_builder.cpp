@@ -82,6 +82,25 @@ sample_3d_world_handles build_sample_3d_world(world& w,
     result.filtered_cube = create_body(w,resources,"physics.filtered_cube",{-6,5,2},{0.5f,0.5f,0.5f},
         {0.9f,0.9f,0.95f,1},"physics.dynamic");
 
+    // Identical mass, initial speed and zero damping isolate contact friction.
+    auto& ground_body=w.get_component<rigid_body_3d_component>(result.ground);
+    ground_body.static_friction=0.8f;
+    ground_body.dynamic_friction=0.6f;
+    result.rough_cube = create_body(w,resources,"physics.rough_cube",{-6,0.4f,-3.8f},{0.4f,0.4f,0.4f},
+        {0.85f,0.38f,0.16f,1},"physics.dynamic");
+    result.slippery_cube = create_body(w,resources,"physics.slippery_cube",{-6,0.4f,-2.2f},{0.4f,0.4f,0.4f},
+        {0.45f,0.9f,1,1},"physics.dynamic");
+    for (auto entity : {result.rough_cube,result.slippery_cube}) {
+        w.get_component<rigid_body_3d_component>(entity).linear_damping=0;
+        w.get_component<collision_filter_3d_component>(entity).mask=collision_layer_3d::world;
+    }
+    auto& rough=w.get_component<rigid_body_3d_component>(result.rough_cube);
+    rough.static_friction=0.8f;
+    rough.dynamic_friction=0.6f;
+    auto& slippery=w.get_component<rigid_body_3d_component>(result.slippery_cube);
+    slippery.static_friction=0.04f;
+    slippery.dynamic_friction=0.02f;
+
     result.directional_light = w.create_entity({.name=string_id{"entity.sun"}});
     w.add_component<directional_light_3d_component>(result.directional_light,
         directional_light_3d_component{.direction={0.35f,-0.9f,0.3f}, .intensity=3.0f});
@@ -89,6 +108,15 @@ sample_3d_world_handles build_sample_3d_world(world& w,
     w.add_tag(result.directional_light, tag_id{"light.active"});
     reset_sample_3d_world(w, result);
     return result;
+}
+
+void restart_friction_demo(world& w, const sample_3d_world_handles& h) {
+    for (auto entity : {h.rough_cube,h.slippery_cube}) {
+        auto& transform=w.get_component<transform_3d_component>(entity);
+        transform.position={-6,0.4f,entity==h.rough_cube ? -3.8f : -2.2f};
+        transform.rotation={};
+        w.get_component<velocity_3d_component>(entity).linear={3,0,0};
+    }
 }
 
 void reset_sample_3d_world(world& w, const sample_3d_world_handles& h) {
@@ -109,6 +137,7 @@ void reset_sample_3d_world(world& w, const sample_3d_world_handles& h) {
     reset_body(h.kinematic_cube, {-3,0.5f,3});
     reset_body(h.sphere, {4,5,-1});
     reset_body(h.filtered_cube, {-6,5,2});
+    restart_friction_demo(w,h);
     w.get_component<collision_filter_3d_component>(h.filtered_cube).mask=collision_layer_3d::world;
     w.add_tag(h.frozen_cube, tag_id{"state.frozen"});
     w.add_tag(h.floating_cube, tag_id{"physics.no_gravity"});

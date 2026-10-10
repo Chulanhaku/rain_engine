@@ -15,9 +15,12 @@ struct sample_3d_world_handles {
     rain::entity_id ground, frozen_cube, floating_cube, kinematic_cube;
     rain::entity_id sphere, trigger_platform;
     rain::entity_id filtered_cube, filter_platform;
+    rain::entity_id rough_cube, slippery_cube;
 };
 
 [[nodiscard]] sample_3d_world_handles build_sample_3d_world(
     rain::world& target_world, const sample_3d_world_resources& resources);
 void reset_sample_3d_world(rain::world& target_world, const sample_3d_world_handles& handles);
+// Restart just the two friction comparison bodies, preserving the current camera.
+void restart_friction_demo(rain::world& target_world, const sample_3d_world_handles& handles);
 }

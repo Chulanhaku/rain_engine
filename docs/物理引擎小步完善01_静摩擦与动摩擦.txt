@@ -1,0 +1,548 @@
+# 物理引擎小步完善 01：静摩擦与动摩擦
+日期：2026-10-09
+任务基线提交：53c91525f97ef0791819980803a09861a62213ac
+范围：只扩展接触摩擦、样例对照和必要回归；暂不扩展 CCD、角动力学、接触流形或新调度机制。
+
+## 代码变更汇总
+
+### 1. 修改文件列表
+
+- [修改] engine/runtime/include/rain/runtime/rigid_body_3d_component.hpp
+- [修改] engine/runtime/src/physics_world_3d.cpp
+- [修改] samples/sample_2d_action/src/sample_3d_world_builder.hpp
+- [修改] samples/sample_2d_action/src/sample_3d_world_builder.cpp
+- [修改] samples/sample_2d_action/src/main.cpp
+- [修改] samples/sample_2d_action/src/sample_physics_world_tests.cpp
+- [新增] docs/物理引擎小步完善01_静摩擦与动摩擦.txt
+- 本轮没有删除文件。
+
+### 2. 逐文件变更说明
+
+#### engine/runtime/include/rain/runtime/rigid_body_3d_component.hpp
+- 修改函数 / 类 / 数据结构：rigid_body_3d_component
+- 改动内容：在 restitution 后追加 static_friction、dynamic_friction，两者默认 0；注释明确它们与 linear_damping、PBR roughness 不同，并说明取值和混合规则。没有删除原字段。
+- 修改原因：接触响应需要双方表面的物理摩擦参数；以零默认值保持现有场景行为。
+- 影响范围：已有源码指定初始化可继续使用，但结构体大小改变，需要重新编译；双方都设置非零系数才会产生摩擦。
+
+#### engine/runtime/src/physics_world_3d.cpp
+- 修改函数 / 类 / 数据结构：新增 friction_coefficients_3d、friction_of、combine_friction；修改 resolve_collision
+- 改动内容：将仅法向冲量扩展为法向加切向冲量。先计算法向支撑/反弹冲量，再用相对切向速度算出完全停止所需的冲量；若不超过静摩擦预算则停住，否则使用动摩擦预算减速。双方获得等大反向冲量并分别按逆质量更新速度。负数/非有限系数按 0 处理，动态系数有效值不超过静态系数；几何均值用 double 计算乘积，避免大有限系数溢出。沿用原碰撞筛选、触发器判断、父级速度转换和法向求解。
+- 修改原因：原物体落地只消除垂直速度，接触面没有切向阻力。使用接触法向冲量作为摩擦预算，区别于全局阻尼，并兼容运动学表面的相对速度。
+- 影响范围：不新增系统或调度阶段，继续由 physics_world_system_3d/Physics World 调用；没有接触、没有法向冲量、trigger、禁用碰撞、solver_iterations=0 均不施加摩擦。
+
+#### samples/sample_2d_action/src/sample_3d_world_builder.hpp
+- 修改函数 / 类 / 数据结构：sample_3d_world_handles；新增 restart_friction_demo 声明
+- 改动内容：追加 rough_cube、slippery_cube 句柄，公开只重播摩擦对照的辅助函数。
+- 修改原因：让样例交互与回归使用同一组实体和初始化逻辑。
+- 影响范围：仅扩展样例接口，已有相机/物体句柄保留。
+
+#### samples/sample_2d_action/src/sample_3d_world_builder.cpp
+- 修改函数 / 类 / 数据结构：build_sample_3d_world、reset_sample_3d_world；新增 restart_friction_demo
+- 改动内容：地面显式设置摩擦系数；前排创建铜色高摩擦方块与冰蓝色低摩擦方块，尺寸、质量、初速度相同，线性阻尼都为 0，仅与 world 层接触。restart_friction_demo 将它们放回 x=-6、y=0.4，赋予沿 +X 的速度 3；完整重置复用此函数。
+- 修改原因：把物理差异做成可直接比较、可重复观察的小场景，排除阻尼、质量和其他物体碰撞的干扰。
+- 影响范围：默认可渲染物体从 9 个增加到 11 个；旧实体默认摩擦系数仍为 0，不因地面设置而改变原有滑动行为。重播不改变相机和其他物体。
+
+#### samples/sample_2d_action/src/main.cpp
+- 修改函数 / 类 / 数据结构：sample_layer::on_attach/on_update/on_detach/bind_input_actions；main 的窗口标题
+- 改动内容：增加对照场景说明，绑定 C 到 demo.friction 并调用 restart_friction_demo；退出时记录双方位置与水平速度；标题增加 C 操作提示。
+- 修改原因：便于在移动相机后反复观察，并用真实运行日志核对结果。
+- 影响范围：原相机、标签切换、R 重置、2D 覆盖层与命令行入口保持；新增一个 C 快捷键。
+
+#### samples/sample_2d_action/src/sample_physics_world_tests.cpp
+- 修改函数 / 类 / 数据结构：新增 friction_test_scene、run_friction_tests；扩展 run_physics_world_tests
+- 改动内容：新增 25 项摩擦专项检查和 2 项样例对照/重播检查：解析减速度、法向支撑、单调停止、静摩擦捕获、动摩擦切换、几何混合、系数约束/非法值/大值、空中/无负载/trigger/disabled/零迭代/无刚体材料、不同质量间动量交换、运动学表面、球体、对角滑动、质量与迭代次数及实体顺序独立性。样例验证低摩擦物体滑得更远且都停住，重播恢复同初速并保留相机。
+- 修改原因：通过物理行为和独立公式验证求解结果，防止摩擦被实现成额外阻尼或随迭代次数放大。
+- 影响范围：沿用已注册的 --physics-test 和 CTest 目标；本轮无需修改 CMake、增加源文件或系统。样例检查数由 97 增至 124。
+
+#### docs/物理引擎小步完善01_静摩擦与动摩擦.txt（新增）
+- 记录本次文件级说明、参数约定、学习顺序、验证结果与任务 diff。
+- 不参与构建；不覆盖上一批任务文档，归档 diff 不包含文档自身。
+
+### 3. 行为变化
+
+- 有摩擦的动态物体在实体表面上滑动会逐渐减速，低速且处于静摩擦预算内时可以停止相对滑动。
+- 摩擦作用于相对速度，所以运动学表面可以带动接触的动态物体；静态或运动学物体不会被反向修改速度。
+- 同时考虑 X/Z 切向速度的总长度，不分别对每个轴使用一份完整摩擦预算。
+- 未设置新字段的旧物体继续保持原有行为；纯 collider 无 rigid_body 材料时视为摩擦系数 0。
+- 样例初始即演示两方块滑动；C 只重播摩擦对照，R 仍重置完整场景。两者都从 x=-6、速度 +3 开始。
+
+当前样例参数：
+对象       static_friction  dynamic_friction  linear_damping
+地面       0.8              0.6               原值（静态不积分）
+铜色方块   0.8              0.6               0
+冰蓝方块   0.04             0.02              0
+
+双方系数按 sqrt(mu_A * mu_B) 混合，因此铜色接触的有效动摩擦为 0.6，冰蓝接触的有效动摩擦约为 0.10954。这里的“高/低摩擦”是物理参数，与 PBR 的 roughness 没有自动联动。
+
+### 4. 风险点
+
+- 这是当前平移物理 V0 上的速度级摩擦近似。没有接触流形、累计摩擦冲量或 warm start，多点接触和密集堆叠仍可能需要更完整的约束求解。
+- 先积分位置、后做接触速度响应，停止距离会有固定步长带来的离散误差；静摩擦并非位置锁定约束，在持续切向外力下可能有微小位移。
+- 目前没有角动力学；球体会减小平移滑动速度，但不会因此产生真实滚动，也未实现滚动摩擦。
+- 没有法向冲量就没有本次摩擦预算；这是接触响应，不是任意表面的粘附力或空中阻尼。
+- effective dynamic_friction = min(valid dynamic_friction, valid static_friction)。仅设置 dynamic_friction 而保留 static_friction=0 不会启用摩擦；请同时配置双方两个字段。
+- 结构体新增字段导致二进制布局变化；本仓库已重新编译。未验证外部二进制插件或自定义裸内存序列化。
+- 本轮验证为 GCC Debug / Windows D3D11；图形烟测验证运行、日志和可见物体数，未声称人工逐键交互或截图视觉验收。
+
+### 5. 建议验证方式
+
+在项目根目录执行：
+1. cmake --build --preset build_gcc_debug -j 8
+2. ctest --preset test_gcc_debug --verbose
+3. .\build\gcc_debug\samples\sample_2d_action\sample_2d_action.exe --physics-test
+4. .\build\gcc_debug\samples\sample_2d_action\sample_2d_action.exe
+   观察前排铜色与冰蓝色方块，按 C 重播；移动相机后再按 C，确认相机不被重置；按 R 验证完整场景重置。
+
+新构建目录先执行 cmake --preset gcc_debug。Windows 映射盘环境 PATH 需包含 C:\msys64\ucrt64\bin，构建建议在仓库的 Z: 映射路径执行。
+
+实际验证：
+- GCC Debug 受影响目标构建通过，无本次编译错误。
+- 摩擦专项：25 checks, 0 failures；另有 2 项真实样例对照与重播检查。
+- Physics World/Broadphase/events/friction：80 checks, 0 failures。
+- 物理样例累计：124 checks, 0 failures（此前 97 项全部保留）。
+- CTest：3/3 通过，包括物理、3D 渲染/PBR/立方体表面剔除、MSAA。
+- 360 帧图形烟测：退出码 0，visible=11，716 个实际固定步；旧立方体与球体仍稳定在 y=0.65；触发器 enter/stay/exit=3/179/3。
+- 铜色方块终点 x=-5.223013，vx=0，滑行约 0.776987 个世界单位。
+- 冰蓝方块终点 x=-1.800003，vx=0，滑行约 4.199997 个世界单位。
+- git diff --check 通过。
+- 日志：build/physics_friction_20261009_ctest.log、build/physics_friction_20261009_smoke.log、build/physics_friction_20261009_smoke.err。
+
+### 6. 建议先理解的三个计算步骤
+
+1. 分出法向和切向速度。
+   接触法线 n 指向 first；相对速度 v = v_first - v_second。
+   法向速度 vn = dot(v,n)，切向速度 vt = v - n*vn。
+   旧代码解决的是法向穿透/反弹，本次增加的是切向滑动响应。
+
+2. 计算预算。
+   法向冲量 Jn = -(1+e)*vn / (inverse_mass_first + inverse_mass_second)。
+   完全消除切向相对速度需要 Jstop = length(vt) / 两者逆质量之和。
+   静摩擦预算为 mu_static * Jn。
+   若 Jstop 在预算内，施加恰好停止的切向冲量；否则施加 mu_dynamic * Jn，并限制为不超过 Jstop。
+
+3. 同时更新双方速度。
+   摩擦方向与 vt 相反；两方收到等大反向的冲量，然后各自乘逆质量得到速度变化。
+   因为使用相对速度，这同样适用于接触一个正在移动的运动学表面。
+
+一个用于回归的独立例子：重力为 10、有效动摩擦 0.3、初速 2，持续滑动 0.5 秒后预期速度为 2 - 0.3*10*0.5 = 0.5；这条检查可以识别摩擦被重复施加或误用阻尼的问题。
+
+建议阅读顺序：rigid_body_3d_component.hpp 的两个字段 → physics_world_3d.cpp 的 friction_of/combine_friction/resolve_collision → sample_3d_world_builder.cpp 的对照参数。先调高/调低冰蓝方块系数，再按 C 观察，便于判断这种参数组织和手感是否符合你的方向。
+
+### 7. 额外处理与下一步边界
+
+- 本轮顺带处理了非法摩擦系数、混合乘积溢出、动摩擦大于静摩擦以及重复求解不应额外增加拖曳等直接相关边界。
+- 没有新增系统，因为摩擦必须使用本次接触的法向冲量，放在已有 resolve_collision 内更直接；也无需改变已注册的样例测试和 CMake。
+- 本轮到此为止。后续可以在理解摩擦后再决定是先改善接触约束/堆叠稳定性，还是处理高速物体穿透；本次未提前实现这些内容。
+
+### 8. 本次代码 diff 归档
+
+以下只包含本轮六个代码文件，相对于任务开始时快照生成；不包含此前任务、构建日志或本文档本身。
+
+--- a/engine/runtime/include/rain/runtime/rigid_body_3d_component.hpp
++++ b/engine/runtime/include/rain/runtime/rigid_body_3d_component.hpp
+@@ -13,5 +13,11 @@
+         f32 linear_damping = 0.02f;
+         // Bounce coefficient, clamped to [0, 1] by the collision solver.
+         f32 restitution = 0.0f;
++        // Contact friction, separate from free-flight linear damping and PBR roughness.
++        // Zero defaults preserve existing scenes. Both surfaces must opt in.
++        // Negative/nonfinite values act as zero; effective dynamic <= static.
++        // Pair coefficients use the geometric mean of the two surfaces.
++        f32 static_friction = 0.0f;
++        f32 dynamic_friction = 0.0f;
+     };
+ }--- a/engine/runtime/src/physics_world_3d.cpp
++++ b/engine/runtime/src/physics_world_3d.cpp
+@@ -283,6 +283,29 @@
+                 std::clamp(body->restitution, 0.0f, 1.0f) : 0.0f;
+         }
+ 
++        struct friction_coefficients_3d
++        {
++            f32 static_friction = 0.0f;
++            f32 dynamic_friction = 0.0f;
++        };
++
++        [[nodiscard]] friction_coefficients_3d friction_of(const world& target_world, entity_id entity)
++        {
++            const auto* body = target_world.try_get_component<rigid_body_3d_component>(entity);
++            if (!body) return {};
++            const auto sanitize = [](f32 value) {
++                return std::isfinite(value) ? std::max(value, 0.0f) : 0.0f;
++            };
++            const f32 static_friction = sanitize(body->static_friction);
++            return {static_friction, std::min(sanitize(body->dynamic_friction), static_friction)};
++        }
++
++        [[nodiscard]] double combine_friction(f32 first, f32 second)
++        {
++            // Use double for the product: finite large coefficients must not overflow.
++            return std::sqrt(static_cast<double>(first) * static_cast<double>(second));
++        }
++
+         void resolve_collision(world& target_world, entity_id lhs, entity_id rhs,
+             const collision_contact_3d& contact, f32 lhs_mass, f32 rhs_mass, const physics_settings_3d& settings)
+         {
+@@ -300,7 +323,26 @@
+ 
+             const f32 restitution = -normal_speed > std::max(settings.restitution_velocity_threshold, 0.0f) ?
+                 std::max(restitution_of(target_world, lhs), restitution_of(target_world, rhs)) : 0.0f;
+-            const vec3 impulse = contact.normal * (-(1.0f + restitution) * normal_speed / inverse_mass_sum);
++            const f32 normal_impulse = -(1.0f + restitution) * normal_speed / inverse_mass_sum;
++            vec3 impulse = contact.normal * normal_impulse;
++
++            // Coulomb friction opposes relative tangential motion, including a
++            // moving kinematic surface. With no normal load there is no friction.
++            const vec3 tangent_velocity = relative_velocity - contact.normal * normal_speed;
++            const f32 tangent_speed = length(tangent_velocity);
++            if (std::isfinite(tangent_speed) && tangent_speed > contact_epsilon)
++            {
++                const auto lhs_friction = friction_of(target_world, lhs);
++                const auto rhs_friction = friction_of(target_world, rhs);
++                const double static_limit = combine_friction(lhs_friction.static_friction,
++                    rhs_friction.static_friction) * normal_impulse;
++                const double stop_impulse = static_cast<double>(tangent_speed) / inverse_mass_sum;
++                const double friction_impulse = stop_impulse <= static_limit ? stop_impulse :
++                    std::min(stop_impulse, combine_friction(lhs_friction.dynamic_friction,
++                        rhs_friction.dynamic_friction) * normal_impulse);
++                // Never reverse relative sliding velocity or apply a second drag per iteration.
++                impulse -= (tangent_velocity / tangent_speed) * static_cast<f32>(friction_impulse);
++            }
+             if (lhs_mass > 0.0f)
+             {
+                 target_world.get_component<velocity_3d_component>(lhs).linear += impulse * lhs_mass;
+--- a/samples/sample_2d_action/src/sample_3d_world_builder.hpp
++++ b/samples/sample_2d_action/src/sample_3d_world_builder.hpp
+@@ -15,9 +15,12 @@
+     rain::entity_id ground, frozen_cube, floating_cube, kinematic_cube;
+     rain::entity_id sphere, trigger_platform;
+     rain::entity_id filtered_cube, filter_platform;
++    rain::entity_id rough_cube, slippery_cube;
+ };
+ 
+ [[nodiscard]] sample_3d_world_handles build_sample_3d_world(
+     rain::world& target_world, const sample_3d_world_resources& resources);
+ void reset_sample_3d_world(rain::world& target_world, const sample_3d_world_handles& handles);
++// Restart just the two friction comparison bodies, preserving the current camera.
++void restart_friction_demo(rain::world& target_world, const sample_3d_world_handles& handles);
+ }
+--- a/samples/sample_2d_action/src/sample_3d_world_builder.cpp
++++ b/samples/sample_2d_action/src/sample_3d_world_builder.cpp
+@@ -82,6 +82,25 @@
+     result.filtered_cube = create_body(w,resources,"physics.filtered_cube",{-6,5,2},{0.5f,0.5f,0.5f},
+         {0.9f,0.9f,0.95f,1},"physics.dynamic");
+ 
++    // Identical mass, initial speed and zero damping isolate contact friction.
++    auto& ground_body=w.get_component<rigid_body_3d_component>(result.ground);
++    ground_body.static_friction=0.8f;
++    ground_body.dynamic_friction=0.6f;
++    result.rough_cube = create_body(w,resources,"physics.rough_cube",{-6,0.4f,-3.8f},{0.4f,0.4f,0.4f},
++        {0.85f,0.38f,0.16f,1},"physics.dynamic");
++    result.slippery_cube = create_body(w,resources,"physics.slippery_cube",{-6,0.4f,-2.2f},{0.4f,0.4f,0.4f},
++        {0.45f,0.9f,1,1},"physics.dynamic");
++    for (auto entity : {result.rough_cube,result.slippery_cube}) {
++        w.get_component<rigid_body_3d_component>(entity).linear_damping=0;
++        w.get_component<collision_filter_3d_component>(entity).mask=collision_layer_3d::world;
++    }
++    auto& rough=w.get_component<rigid_body_3d_component>(result.rough_cube);
++    rough.static_friction=0.8f;
++    rough.dynamic_friction=0.6f;
++    auto& slippery=w.get_component<rigid_body_3d_component>(result.slippery_cube);
++    slippery.static_friction=0.04f;
++    slippery.dynamic_friction=0.02f;
++
+     result.directional_light = w.create_entity({.name=string_id{"entity.sun"}});
+     w.add_component<directional_light_3d_component>(result.directional_light,
+         directional_light_3d_component{.direction={0.35f,-0.9f,0.3f}, .intensity=3.0f});
+@@ -89,6 +108,15 @@
+     w.add_tag(result.directional_light, tag_id{"light.active"});
+     reset_sample_3d_world(w, result);
+     return result;
++}
++
++void restart_friction_demo(world& w, const sample_3d_world_handles& h) {
++    for (auto entity : {h.rough_cube,h.slippery_cube}) {
++        auto& transform=w.get_component<transform_3d_component>(entity);
++        transform.position={-6,0.4f,entity==h.rough_cube ? -3.8f : -2.2f};
++        transform.rotation={};
++        w.get_component<velocity_3d_component>(entity).linear={3,0,0};
++    }
+ }
+ 
+ void reset_sample_3d_world(world& w, const sample_3d_world_handles& h) {
+@@ -109,6 +137,7 @@
+     reset_body(h.kinematic_cube, {-3,0.5f,3});
+     reset_body(h.sphere, {4,5,-1});
+     reset_body(h.filtered_cube, {-6,5,2});
++    restart_friction_demo(w,h);
+     w.get_component<collision_filter_3d_component>(h.filtered_cube).mask=collision_layer_3d::world;
+     w.add_tag(h.frozen_cube, tag_id{"state.frozen"});
+     w.add_tag(h.floating_cube, tag_id{"physics.no_gravity"});
+--- a/samples/sample_2d_action/src/main.cpp
++++ b/samples/sample_2d_action/src/main.cpp
+@@ -103,6 +103,7 @@
+         log_info("Physics World: blue=dynamic, yellow=frozen, purple=no gravity, green=kinematic.");
+         log_info("Orange sphere turns cyan with state.in_trigger while crossing the red trigger; enter/exit events are logged.");
+         log_info("White cube ignores the cyan platform by collision mask, but lands on the ground. L toggles platform collisions.");
++        log_info("Front cubes: copper=high friction, ice-blue=low friction; identical speed 3, zero damping. C replays the slide comparison.");
+         log_info("WASD move; Q/E down/up; arrows look; Shift boost; Esc quit.");
+         log_info("Space launch blue; F freeze blue; V release/freeze yellow; G purple gravity; T platform solidity.");
+         log_info("P toggle blue physics.disabled; R reset scene + camera; Tab show/hide 2D; H hide/show green 2D rectangle; B freeze 2D movement.");
+@@ -119,6 +120,8 @@
+             sample_3d::reset_sample_3d_world(w,handles_3d_);
+             physics_.reset(w);
+         }
++        if (input.is_pressed(string_id{"demo.friction"}))
++            sample_3d::restart_friction_demo(w,handles_3d_);
+         if (input.is_pressed(string_id{"demo.launch"})) {
+             w.remove_tag(handles_3d_.cube,tag_id{"state.frozen"});
+             w.get_component<velocity_3d_component>(handles_3d_.cube).linear.y=7;
+@@ -162,6 +165,11 @@
+             ", contacts="+std::to_string(stats.collision_count)+
+             ", trigger enter/stay/exit="+std::to_string(physics_.trigger_enters)+"/"+
+             std::to_string(physics_.trigger_stays)+"/"+std::to_string(physics_.trigger_exits));
++        log_info("Friction comparison: rough x="+
++            std::to_string(w.get_component<transform_3d_component>(handles_3d_.rough_cube).position.x)+
++            ", vx="+std::to_string(w.get_component<velocity_3d_component>(handles_3d_.rough_cube).linear.x)+
++            "; slippery x="+std::to_string(w.get_component<transform_3d_component>(handles_3d_.slippery_cube).position.x)+
++            ", vx="+std::to_string(w.get_component<velocity_3d_component>(handles_3d_.slippery_cube).linear.x));
+         renderer_2d_.reset();
+         renderer_3d_.reset();
+         context.materials->destroy(solid_material_);
+@@ -197,6 +205,7 @@
+         input.bind_button(string_id{"demo.gravity"},key_code::g);
+         input.bind_button(string_id{"demo.trigger"},key_code::t);
+         input.bind_button(string_id{"demo.reset"},key_code::r);
++        input.bind_button(string_id{"demo.friction"},key_code::c);
+         input.bind_button(string_id{"demo.disabled"},key_code::p);
+         input.bind_button(string_id{"demo.filter"},key_code::l);
+         input.bind_button(string_id{"demo.overlay"},key_code::tab);
+@@ -234,7 +243,7 @@
+             return 2;
+         }
+     }
+-    rain::application app({.title="Rain Engine - Physics World | WASD + arrows | Space F V G T P L | R reset | Tab 2D",
++    rain::application app({.title="Rain Engine - Physics World | WASD + arrows | Space F V G T P L | C friction | R reset | Tab 2D",
+         .width=1280, .height=720, .resizable=true,
+         .clear_color={.r=0.06f,.g=0.08f,.b=0.13f,.a=1}});
+     app.push_layer(std::make_unique<sample_layer>(frame_limit));
+--- a/samples/sample_2d_action/src/sample_physics_world_tests.cpp
++++ b/samples/sample_2d_action/src/sample_physics_world_tests.cpp
+@@ -42,6 +42,185 @@
+         if (e.type==type && e.trigger==trigger &&
+             ((e.first==a && e.second==b) || (e.first==b && e.second==a))) return true;
+     return false;
++}
++
++// Use a known gravity and zero damping so friction has an analytic oracle.
++struct friction_test_scene {
++    world target;
++    physics_world_3d simulation;
++    entity_id ground,cube;
++    u64 tick=0;
++
++    explicit friction_test_scene(u32 iterations=4,bool reverse_entity_order=false)
++        : simulation(physics_settings_3d{.gravity={0,-10,0},.solver_iterations=iterations}) {
++        if (reverse_entity_order) cube=body(target,{0,0.5f,0});
++        ground=body(target,{0,-0.5f,0},false);
++        if (!reverse_entity_order) cube=body(target,{0,0.5f,0});
++        target.get_component<collider_3d_component>(ground).half_extents={50,0.5f,50};
++        target.remove_tag(cube,tag_id{"physics.no_gravity"});
++        target.get_component<velocity_3d_component>(cube).linear={2,0,0};
++    }
++    void material(entity_id entity,f32 static_friction,f32 dynamic_friction) {
++        auto& rigid=target.get_component<rigid_body_3d_component>(entity);
++        rigid.static_friction=static_friction;
++        rigid.dynamic_friction=dynamic_friction;
++    }
++    void materials(f32 static_friction,f32 dynamic_friction) {
++        material(ground,static_friction,dynamic_friction);
++        material(cube,static_friction,dynamic_friction);
++    }
++    void step(u32 count=1) {
++        for (u32 i=0;i<count;++i) {
++            simulation.step(target,1.0f/120.0f,tick++);
++            simulation.clear_events();
++        }
++    }
++    vec3 velocity() const { return target.get_component<velocity_3d_component>(cube).linear; }
++};
++
++physics_sample_test_result run_friction_tests() {
++    physics_sample_test_result result;
++    const auto check=[&](bool condition,const char* name) {
++        ++result.checks;
++        if (!condition) { ++result.failures; std::fprintf(stderr,"FAIL: %s\n",name); }
++    };
++    const auto near=[](f32 a,f32 b) { return std::abs(a-b)<0.0002f; };
++    friction_test_scene defaults;
++    defaults.step(60);
++    check(near(defaults.velocity().x,2),"zero default friction preserves existing tangential motion");
++    friction_test_scene zero_surface;
++    zero_surface.material(zero_surface.ground,1,1);
++    zero_surface.step(60);
++    check(near(zero_surface.velocity().x,2),"a frictionless surface keeps the mixed pair frictionless");
++    friction_test_scene sliding;
++    sliding.materials(0.5f,0.3f);
++    sliding.step(60);
++    // v = v0 - mu*g*t = 2 - 0.3*10*0.5 = 0.5, independently of solver iterations.
++    check(near(sliding.velocity().x,0.5f),"kinetic friction matches analytic deceleration over half a second");
++    check(near(sliding.target.get_component<transform_3d_component>(sliding.cube).position.y,0.5f),
++        "friction preserves normal support on the floor");
++    bool monotonic=true;
++    for (u32 i=0;i<120;++i) {
++        const f32 before=sliding.velocity().x;
++        sliding.step();
++        monotonic &= sliding.velocity().x>=-0.00001f && sliding.velocity().x<=before+0.00001f;
++    }
++    check(monotonic && near(sliding.velocity().x,0),"friction stops without reversing or reaccelerating a body");
++
++    friction_test_scene static_capture;
++    static_capture.materials(0.5f,0.1f);
++    static_capture.target.get_component<velocity_3d_component>(static_capture.cube).linear.x=0.035f;
++    static_capture.step();
++    check(near(static_capture.velocity().x,0),"static friction captures motion below its normal-impulse budget");
++    friction_test_scene breakaway;
++    breakaway.materials(0.5f,0.1f);
++    breakaway.target.get_component<velocity_3d_component>(breakaway.cube).linear.x=0.08f;
++    breakaway.step();
++    check(near(breakaway.velocity().x,0.08f-0.1f*10/120),"exceeding static capacity uses the kinetic coefficient");
++    friction_test_scene mixed;
++    mixed.material(mixed.ground,0.9f,0.9f);
++    mixed.material(mixed.cube,0.1f,0.1f);
++    mixed.step(60);
++    check(near(mixed.velocity().x,0.5f),"different surface coefficients combine using the geometric mean");
++    friction_test_scene bounded;
++    bounded.materials(0.1f,10);
++    bounded.step();
++    check(near(bounded.velocity().x,2.0f-0.1f*10/120),"effective kinetic friction is bounded by static friction");
++    bool invalid_safe=true;
++    for (f32 invalid : {-1.0f,std::numeric_limits<f32>::quiet_NaN(),std::numeric_limits<f32>::infinity()}) {
++        friction_test_scene bad;
++        bad.material(bad.ground,1,1);
++        bad.material(bad.cube,invalid,invalid);
++        bad.step();
++        invalid_safe &= near(bad.velocity().x,2) && std::isfinite(bad.velocity().y);
++    }
++    check(invalid_safe,"negative and nonfinite friction coefficients safely act as zero");
++    friction_test_scene invalid_kinetic;
++    invalid_kinetic.materials(0.5f,std::numeric_limits<f32>::quiet_NaN());
++    invalid_kinetic.step();
++    check(near(invalid_kinetic.velocity().x,2),"invalid kinetic coefficient does not poison sliding velocities");
++    friction_test_scene large;
++    large.materials(std::numeric_limits<f32>::max(),std::numeric_limits<f32>::max());
++    large.step();
++    check(near(large.velocity().x,0) && std::isfinite(large.velocity().y),"large finite coefficients do not overflow material mixing");
++
++    friction_test_scene airborne;
++    airborne.materials(1,1);
++    airborne.target.get_component<transform_3d_component>(airborne.cube).position.y=5;
++    airborne.step(60);
++    check(near(airborne.velocity().x,2),"contact friction does not act as free-flight damping");
++    friction_test_scene unloaded;
++    unloaded.materials(1,1);
++    unloaded.target.add_tag(unloaded.cube,tag_id{"physics.no_gravity"});
++    unloaded.step(60);
++    check(near(unloaded.velocity().x,2),"touching without a normal impulse does not invent friction load");
++    friction_test_scene trigger;
++    trigger.materials(1,1);
++    trigger.target.add_tag(trigger.ground,tag_id{"physics.trigger"});
++    trigger.step();
++    check(near(trigger.velocity().x,2) && trigger.velocity().y<0,"triggers apply neither friction nor support");
++    friction_test_scene disabled;
++    disabled.materials(1,1);
++    disabled.target.add_tag(disabled.ground,tag_id{"physics.disabled"});
++    disabled.step();
++    check(near(disabled.velocity().x,2) && disabled.velocity().y<0,"disabled colliders apply no friction");
++    friction_test_scene detect_only(0);
++    detect_only.materials(1,1);
++    detect_only.step();
++    check(near(detect_only.velocity().x,2) && detect_only.velocity().y<0,"zero solver iterations disables friction response");
++    friction_test_scene collider_only;
++    collider_only.material(collider_only.cube,1,1);
++    collider_only.target.remove_component<rigid_body_3d_component>(collider_only.ground);
++    collider_only.step();
++    check(near(collider_only.velocity().x,2) && near(collider_only.velocity().y,0),
++        "a collider without rigid-body material remains frictionless and still supports bodies");
++
++    friction_test_scene dynamic_pair;
++    dynamic_pair.materials(0.5f,0.3f);
++    dynamic_pair.target.remove_tag(dynamic_pair.ground,tag_id{"physics.static"});
++    dynamic_pair.target.add_tag(dynamic_pair.ground,tag_id{"physics.dynamic"});
++    dynamic_pair.target.get_component<rigid_body_3d_component>(dynamic_pair.ground).inverse_mass=0.5f;
++    dynamic_pair.target.add_tag(dynamic_pair.cube,tag_id{"physics.no_gravity"});
++    dynamic_pair.target.get_component<velocity_3d_component>(dynamic_pair.cube).linear={2,-1,0};
++    dynamic_pair.step();
++    const auto lower_velocity=dynamic_pair.target.get_component<velocity_3d_component>(dynamic_pair.ground).linear;
++    check(near(dynamic_pair.velocity().x+2*lower_velocity.x,2) && lower_velocity.x>0 && dynamic_pair.velocity().x<2,
++        "friction transfers tangential momentum between unequal dynamic masses");
++    friction_test_scene conveyor;
++    conveyor.materials(1,1);
++    conveyor.target.remove_tag(conveyor.ground,tag_id{"physics.static"});
++    conveyor.target.add_tag(conveyor.ground,tag_id{"physics.kinematic"});
++    conveyor.target.get_component<velocity_3d_component>(conveyor.ground).linear={1,0,0};
++    conveyor.target.get_component<velocity_3d_component>(conveyor.cube).linear={};
++    conveyor.step(30);
++    check(near(conveyor.velocity().x,1) && near(conveyor.target.get_component<velocity_3d_component>(conveyor.ground).linear.x,1),
++        "friction follows kinematic surface velocity without changing that surface's velocity");
++    friction_test_scene sphere;
++    sphere.materials(0.5f,0.3f);
++    sphere.target.get_component<collider_3d_component>(sphere.cube).shape=collider_shape_3d::sphere;
++    sphere.target.get_component<velocity_3d_component>(sphere.cube).linear={0,0,2};
++    sphere.step(60);
++    check(near(sphere.velocity().z,0.5f) && near(sphere.velocity().x,0),"sphere-box friction handles the second tangential axis");
++    friction_test_scene diagonal;
++    diagonal.materials(0.5f,0.3f);
++    diagonal.target.get_component<velocity_3d_component>(diagonal.cube).linear={1.2f,0,1.6f};
++    diagonal.step(60);
++    check(near(diagonal.velocity().x,0.3f) && near(diagonal.velocity().z,0.4f),
++        "diagonal sliding has one isotropic friction budget, not one per axis");
++    friction_test_scene light;
++    light.materials(0.5f,0.3f);
++    light.target.get_component<rigid_body_3d_component>(light.cube).inverse_mass=2;
++    light.step(60);
++    check(near(light.velocity().x,0.5f),"supported sliding deceleration is independent of mass");
++    friction_test_scene one_iteration(1),many_iterations(8),reversed(4,true);
++    for (auto* scene : {&one_iteration,&many_iterations,&reversed}) {
++        scene->materials(0.5f,0.3f);scene->step(60);
++    }
++    check(near(one_iteration.velocity().x,many_iterations.velocity().x) && near(many_iterations.velocity().x,0.5f),
++        "solver iterations do not multiply single-contact friction");
++    check(near(reversed.velocity().x,one_iteration.velocity().x),"friction is independent of canonical entity ordering");
++    std::printf("Friction: %d checks, %d failures\n",result.checks,result.failures);
++    return result;
+ }
+ 
+ struct tick_record {
+@@ -302,6 +481,19 @@
+     for (u64 frame=0;frame<240;++frame) demo_physics.run_test_frame(demo_scheduler,demo,demo_events,1.0f/60,frame);
+     check(near(demo.get_component<transform_3d_component>(handles.filtered_cube).position.y,0.5f,0.003f),
+         "sample filtered cube crosses excluded platform and lands on world layer");
++    const auto& rough_position=demo.get_component<transform_3d_component>(handles.rough_cube).position;
++    const auto& slippery_position=demo.get_component<transform_3d_component>(handles.slippery_cube).position;
++    check(slippery_position.x>rough_position.x+2 && near(rough_position.y,0.4f) && near(slippery_position.y,0.4f) &&
++        near(demo.get_component<velocity_3d_component>(handles.rough_cube).linear.x,0) &&
++        near(demo.get_component<velocity_3d_component>(handles.slippery_cube).linear.x,0),
++        "sample low-friction cube travels farther while both cubes settle on the same floor");
++    const auto camera_before=demo.get_component<transform_3d_component>(handles.camera).position;
++    restart_friction_demo(demo,handles);
++    check(near(rough_position.x,-6) && near(slippery_position.x,-6) &&
++        near(demo.get_component<velocity_3d_component>(handles.rough_cube).linear.x,3) &&
++        near(demo.get_component<velocity_3d_component>(handles.slippery_cube).linear.x,3) &&
++        near(demo.get_component<transform_3d_component>(handles.camera).position.z,camera_before.z),
++        "friction replay resets identical initial conditions without moving the camera");
+     auto& filter=demo.get_component<collision_filter_3d_component>(handles.filtered_cube);
+     filter.mask|=collision_layer_3d::enemy;
+     demo.get_component<transform_3d_component>(handles.filtered_cube).position={-6,5,2};
+@@ -330,7 +522,10 @@
+     check(demo_physics.simulation.events().empty() && demo_physics.simulation.stats().collider_count==0,
+         "sample reset clears physics statistics and pending events");
+ 
+-    std::printf("Physics World/Broadphase/events: %d checks, %d failures\n",result.checks,result.failures);
++    const auto friction=run_friction_tests();
++    result.checks+=friction.checks;
++    result.failures+=friction.failures;
++    std::printf("Physics World/Broadphase/events/friction: %d checks, %d failures\n",result.checks,result.failures);
+     return result;
+ }
+ }

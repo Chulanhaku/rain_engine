@@ -1,6 +1,7 @@
 #pragma once
 
 #include<rain/core/types.hpp>
+#include <rain/core/math/vec2.hpp>
 #include<rain/platform/key_code.hpp>
 
 #include<string>
@@ -38,6 +39,9 @@ namespace rain{
 
         [[nodiscard]]f32 mouse_x()const;
         [[nodiscard]]f32 mouse_y()const;
+        // GLFW cursor units / logical window size, independent of framebuffer DPI.
+        // False when unfocused, outside the client area, or minimized; output reset.
+        [[nodiscard]] bool mouse_position_normalized(vec2& position) const;
 
         [[nodiscard]]u32 width()const;
         [[nodiscard]]u32 height()const;

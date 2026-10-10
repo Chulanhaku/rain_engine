@@ -1,4 +1,5 @@
 #include <rain/runtime/physics_world_3d.hpp>
+#include "physics_geometry_3d.hpp"
 
 #include <rain/runtime/collider_3d_component.hpp>
 #include <rain/runtime/local_matrix_3d_component.hpp>
@@ -15,33 +16,19 @@ namespace rain
 {
     namespace
     {
+        using detail::current_world_matrix;
+        using detail::basis;
+        using detail::world_aabb_3d;
+        using detail::world_sphere_3d;
+        using detail::make_world_aabb;
+        using detail::make_world_sphere;
+
         constexpr f32 contact_epsilon = 0.000001f;
         constexpr f32 contact_tolerance = 0.00001f;
 
         [[nodiscard]] bool has_physics_tag(const world& target_world, entity_id entity, const char* name)
         {
             return target_world.has_tag_in_hierarchy(entity, tag_id{name});
-        }
-
-        // Match transform_hierarchy_system_3d's explicit inherit-parent opt-in,
-        // and compute from current local transforms, not last frame's cache.
-        [[nodiscard]] mat4 current_world_matrix(const world& target_world, entity_id entity)
-        {
-            mat4 result = mat4::identity();
-            usize visited = 0;
-            while (target_world.is_alive(entity) && visited++ < target_world.entity_capacity())
-            {
-                const auto* transform = target_world.try_get_component<transform_3d_component>(entity);
-                if (transform == nullptr) break;
-                const auto* matrix_override = target_world.try_get_component<local_matrix_3d_component>(entity);
-                result = result * (matrix_override != nullptr ? matrix_override->matrix : transform->matrix());
-
-                if (!target_world.has_tag(entity, tag_id{"transform.inherit_parent"})) break;
-                const entity_id parent = target_world.parent_of(entity);
-                if (!target_world.is_entity_active(parent)) break;
-                entity = parent;
-            }
-            return result;
         }
 
         [[nodiscard]] mat4 parent_world_matrix(const world& target_world, entity_id entity)
@@ -53,11 +40,6 @@ namespace rain
                 return current_world_matrix(target_world, parent);
             }
             return mat4::identity();
-        }
-
-        [[nodiscard]] vec3 basis(const mat4& matrix, u32 row)
-        {
-            return {matrix.values[row][0], matrix.values[row][1], matrix.values[row][2]};
         }
 
         [[nodiscard]] f32 basis_determinant(const mat4& matrix)
@@ -103,53 +85,6 @@ namespace rain
             const f32 determinant = basis_determinant(parent_world_matrix(target_world, entity));
             return std::isfinite(determinant) && std::abs(determinant) > contact_epsilon ?
                 body->inverse_mass : 0.0f;
-        }
-
-        struct world_aabb_3d
-        {
-            vec3 center{};
-            vec3 half_extents{};
-        };
-
-        [[nodiscard]] world_aabb_3d make_world_aabb(const mat4& matrix, const collider_3d_component& collider)
-        {
-            const vec3 half{
-                std::abs(collider.half_extents.x),
-                std::abs(collider.half_extents.y),
-                std::abs(collider.half_extents.z)
-            };
-            return {
-                .center = transform_point(collider.center, matrix),
-                .half_extents = {
-                    std::abs(matrix.values[0][0]) * half.x + std::abs(matrix.values[1][0]) * half.y + std::abs(matrix.values[2][0]) * half.z,
-                    std::abs(matrix.values[0][1]) * half.x + std::abs(matrix.values[1][1]) * half.y + std::abs(matrix.values[2][1]) * half.z,
-                    std::abs(matrix.values[0][2]) * half.x + std::abs(matrix.values[1][2]) * half.y + std::abs(matrix.values[2][2]) * half.z
-                }
-            };
-        }
-
-        struct world_sphere_3d
-        {
-            vec3 center{};
-            f32 radius = 0.0f;
-        };
-
-        [[nodiscard]] world_sphere_3d make_world_sphere(const mat4& matrix, const collider_3d_component& collider)
-        {
-            // Bound the largest eigenvalue of A*A^T. Unlike max_basis_scale,
-            // this stays conservative when parent nonuniform scale adds shear.
-            const vec3 x = basis(matrix, 0);
-            const vec3 y = basis(matrix, 1);
-            const vec3 z = basis(matrix, 2);
-            const f32 bound_squared = std::max({
-                dot(x, x) + std::abs(dot(x, y)) + std::abs(dot(x, z)),
-                dot(y, y) + std::abs(dot(y, x)) + std::abs(dot(y, z)),
-                dot(z, z) + std::abs(dot(z, x)) + std::abs(dot(z, y))
-            });
-            return {
-                .center = transform_point(collider.center, matrix),
-                .radius = std::abs(collider.radius) * std::sqrt(std::max(bound_squared, 0.0f))
-            };
         }
 
         struct collision_contact_3d
@@ -283,6 +218,29 @@ namespace rain
                 std::clamp(body->restitution, 0.0f, 1.0f) : 0.0f;
         }
 
+        struct friction_coefficients_3d
+        {
+            f32 static_friction = 0.0f;
+            f32 dynamic_friction = 0.0f;
+        };
+
+        [[nodiscard]] friction_coefficients_3d friction_of(const world& target_world, entity_id entity)
+        {
+            const auto* body = target_world.try_get_component<rigid_body_3d_component>(entity);
+            if (!body) return {};
+            const auto sanitize = [](f32 value) {
+                return std::isfinite(value) ? std::max(value, 0.0f) : 0.0f;
+            };
+            const f32 static_friction = sanitize(body->static_friction);
+            return {static_friction, std::min(sanitize(body->dynamic_friction), static_friction)};
+        }
+
+        [[nodiscard]] double combine_friction(f32 first, f32 second)
+        {
+            // Use double for the product: finite large coefficients must not overflow.
+            return std::sqrt(static_cast<double>(first) * static_cast<double>(second));
+        }
+
         void resolve_collision(world& target_world, entity_id lhs, entity_id rhs,
             const collision_contact_3d& contact, f32 lhs_mass, f32 rhs_mass, const physics_settings_3d& settings)
         {
@@ -300,7 +258,26 @@ namespace rain
 
             const f32 restitution = -normal_speed > std::max(settings.restitution_velocity_threshold, 0.0f) ?
                 std::max(restitution_of(target_world, lhs), restitution_of(target_world, rhs)) : 0.0f;
-            const vec3 impulse = contact.normal * (-(1.0f + restitution) * normal_speed / inverse_mass_sum);
+            const f32 normal_impulse = -(1.0f + restitution) * normal_speed / inverse_mass_sum;
+            vec3 impulse = contact.normal * normal_impulse;
+
+            // Coulomb friction opposes relative tangential motion, including a
+            // moving kinematic surface. With no normal load there is no friction.
+            const vec3 tangent_velocity = relative_velocity - contact.normal * normal_speed;
+            const f32 tangent_speed = length(tangent_velocity);
+            if (std::isfinite(tangent_speed) && tangent_speed > contact_epsilon)
+            {
+                const auto lhs_friction = friction_of(target_world, lhs);
+                const auto rhs_friction = friction_of(target_world, rhs);
+                const double static_limit = combine_friction(lhs_friction.static_friction,
+                    rhs_friction.static_friction) * normal_impulse;
+                const double stop_impulse = static_cast<double>(tangent_speed) / inverse_mass_sum;
+                const double friction_impulse = stop_impulse <= static_limit ? stop_impulse :
+                    std::min(stop_impulse, combine_friction(lhs_friction.dynamic_friction,
+                        rhs_friction.dynamic_friction) * normal_impulse);
+                // Never reverse relative sliding velocity or apply a second drag per iteration.
+                impulse -= (tangent_velocity / tangent_speed) * static_cast<f32>(friction_impulse);
+            }
             if (lhs_mass > 0.0f)
             {
                 target_world.get_component<velocity_3d_component>(lhs).linear += impulse * lhs_mass;
@@ -429,10 +406,14 @@ namespace rain
         build_broadphase(target_world);
         solve_collisions(target_world);
         finalize_collision_events(fixed_tick_index);
+        sync_queries(target_world);
     }
+    void physics_world_3d::sync_queries(const world& target_world) { queries_.sync(target_world); }
+    const spatial_query_3d& physics_world_3d::queries() const { return queries_; }
     const std::vector<collision_event_3d>& physics_world_3d::events() const { return events_; }
     void physics_world_3d::clear_events() { events_.clear(); }
     void physics_world_3d::reset() {
+        queries_.clear();
         broadphase_.clear();active_collisions_.clear();current_collisions_.clear();
         active_pairs_.clear();current_pairs_.clear();events_.clear();stats_={};
     }

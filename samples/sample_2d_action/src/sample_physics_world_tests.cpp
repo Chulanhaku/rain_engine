@@ -44,6 +44,185 @@ bool has_event(const physics_world_3d& simulation,collision_event_type_3d type,
     return false;
 }
 
+// Use a known gravity and zero damping so friction has an analytic oracle.
+struct friction_test_scene {
+    world target;
+    physics_world_3d simulation;
+    entity_id ground,cube;
+    u64 tick=0;
+
+    explicit friction_test_scene(u32 iterations=4,bool reverse_entity_order=false)
+        : simulation(physics_settings_3d{.gravity={0,-10,0},.solver_iterations=iterations}) {
+        if (reverse_entity_order) cube=body(target,{0,0.5f,0});
+        ground=body(target,{0,-0.5f,0},false);
+        if (!reverse_entity_order) cube=body(target,{0,0.5f,0});
+        target.get_component<collider_3d_component>(ground).half_extents={50,0.5f,50};
+        target.remove_tag(cube,tag_id{"physics.no_gravity"});
+        target.get_component<velocity_3d_component>(cube).linear={2,0,0};
+    }
+    void material(entity_id entity,f32 static_friction,f32 dynamic_friction) {
+        auto& rigid=target.get_component<rigid_body_3d_component>(entity);
+        rigid.static_friction=static_friction;
+        rigid.dynamic_friction=dynamic_friction;
+    }
+    void materials(f32 static_friction,f32 dynamic_friction) {
+        material(ground,static_friction,dynamic_friction);
+        material(cube,static_friction,dynamic_friction);
+    }
+    void step(u32 count=1) {
+        for (u32 i=0;i<count;++i) {
+            simulation.step(target,1.0f/120.0f,tick++);
+            simulation.clear_events();
+        }
+    }
+    vec3 velocity() const { return target.get_component<velocity_3d_component>(cube).linear; }
+};
+
+physics_sample_test_result run_friction_tests() {
+    physics_sample_test_result result;
+    const auto check=[&](bool condition,const char* name) {
+        ++result.checks;
+        if (!condition) { ++result.failures; std::fprintf(stderr,"FAIL: %s\n",name); }
+    };
+    const auto near=[](f32 a,f32 b) { return std::abs(a-b)<0.0002f; };
+    friction_test_scene defaults;
+    defaults.step(60);
+    check(near(defaults.velocity().x,2),"zero default friction preserves existing tangential motion");
+    friction_test_scene zero_surface;
+    zero_surface.material(zero_surface.ground,1,1);
+    zero_surface.step(60);
+    check(near(zero_surface.velocity().x,2),"a frictionless surface keeps the mixed pair frictionless");
+    friction_test_scene sliding;
+    sliding.materials(0.5f,0.3f);
+    sliding.step(60);
+    // v = v0 - mu*g*t = 2 - 0.3*10*0.5 = 0.5, independently of solver iterations.
+    check(near(sliding.velocity().x,0.5f),"kinetic friction matches analytic deceleration over half a second");
+    check(near(sliding.target.get_component<transform_3d_component>(sliding.cube).position.y,0.5f),
+        "friction preserves normal support on the floor");
+    bool monotonic=true;
+    for (u32 i=0;i<120;++i) {
+        const f32 before=sliding.velocity().x;
+        sliding.step();
+        monotonic &= sliding.velocity().x>=-0.00001f && sliding.velocity().x<=before+0.00001f;
+    }
+    check(monotonic && near(sliding.velocity().x,0),"friction stops without reversing or reaccelerating a body");
+
+    friction_test_scene static_capture;
+    static_capture.materials(0.5f,0.1f);
+    static_capture.target.get_component<velocity_3d_component>(static_capture.cube).linear.x=0.035f;
+    static_capture.step();
+    check(near(static_capture.velocity().x,0),"static friction captures motion below its normal-impulse budget");
+    friction_test_scene breakaway;
+    breakaway.materials(0.5f,0.1f);
+    breakaway.target.get_component<velocity_3d_component>(breakaway.cube).linear.x=0.08f;
+    breakaway.step();
+    check(near(breakaway.velocity().x,0.08f-0.1f*10/120),"exceeding static capacity uses the kinetic coefficient");
+    friction_test_scene mixed;
+    mixed.material(mixed.ground,0.9f,0.9f);
+    mixed.material(mixed.cube,0.1f,0.1f);
+    mixed.step(60);
+    check(near(mixed.velocity().x,0.5f),"different surface coefficients combine using the geometric mean");
+    friction_test_scene bounded;
+    bounded.materials(0.1f,10);
+    bounded.step();
+    check(near(bounded.velocity().x,2.0f-0.1f*10/120),"effective kinetic friction is bounded by static friction");
+    bool invalid_safe=true;
+    for (f32 invalid : {-1.0f,std::numeric_limits<f32>::quiet_NaN(),std::numeric_limits<f32>::infinity()}) {
+        friction_test_scene bad;
+        bad.material(bad.ground,1,1);
+        bad.material(bad.cube,invalid,invalid);
+        bad.step();
+        invalid_safe &= near(bad.velocity().x,2) && std::isfinite(bad.velocity().y);
+    }
+    check(invalid_safe,"negative and nonfinite friction coefficients safely act as zero");
+    friction_test_scene invalid_kinetic;
+    invalid_kinetic.materials(0.5f,std::numeric_limits<f32>::quiet_NaN());
+    invalid_kinetic.step();
+    check(near(invalid_kinetic.velocity().x,2),"invalid kinetic coefficient does not poison sliding velocities");
+    friction_test_scene large;
+    large.materials(std::numeric_limits<f32>::max(),std::numeric_limits<f32>::max());
+    large.step();
+    check(near(large.velocity().x,0) && std::isfinite(large.velocity().y),"large finite coefficients do not overflow material mixing");
+
+    friction_test_scene airborne;
+    airborne.materials(1,1);
+    airborne.target.get_component<transform_3d_component>(airborne.cube).position.y=5;
+    airborne.step(60);
+    check(near(airborne.velocity().x,2),"contact friction does not act as free-flight damping");
+    friction_test_scene unloaded;
+    unloaded.materials(1,1);
+    unloaded.target.add_tag(unloaded.cube,tag_id{"physics.no_gravity"});
+    unloaded.step(60);
+    check(near(unloaded.velocity().x,2),"touching without a normal impulse does not invent friction load");
+    friction_test_scene trigger;
+    trigger.materials(1,1);
+    trigger.target.add_tag(trigger.ground,tag_id{"physics.trigger"});
+    trigger.step();
+    check(near(trigger.velocity().x,2) && trigger.velocity().y<0,"triggers apply neither friction nor support");
+    friction_test_scene disabled;
+    disabled.materials(1,1);
+    disabled.target.add_tag(disabled.ground,tag_id{"physics.disabled"});
+    disabled.step();
+    check(near(disabled.velocity().x,2) && disabled.velocity().y<0,"disabled colliders apply no friction");
+    friction_test_scene detect_only(0);
+    detect_only.materials(1,1);
+    detect_only.step();
+    check(near(detect_only.velocity().x,2) && detect_only.velocity().y<0,"zero solver iterations disables friction response");
+    friction_test_scene collider_only;
+    collider_only.material(collider_only.cube,1,1);
+    collider_only.target.remove_component<rigid_body_3d_component>(collider_only.ground);
+    collider_only.step();
+    check(near(collider_only.velocity().x,2) && near(collider_only.velocity().y,0),
+        "a collider without rigid-body material remains frictionless and still supports bodies");
+
+    friction_test_scene dynamic_pair;
+    dynamic_pair.materials(0.5f,0.3f);
+    dynamic_pair.target.remove_tag(dynamic_pair.ground,tag_id{"physics.static"});
+    dynamic_pair.target.add_tag(dynamic_pair.ground,tag_id{"physics.dynamic"});
+    dynamic_pair.target.get_component<rigid_body_3d_component>(dynamic_pair.ground).inverse_mass=0.5f;
+    dynamic_pair.target.add_tag(dynamic_pair.cube,tag_id{"physics.no_gravity"});
+    dynamic_pair.target.get_component<velocity_3d_component>(dynamic_pair.cube).linear={2,-1,0};
+    dynamic_pair.step();
+    const auto lower_velocity=dynamic_pair.target.get_component<velocity_3d_component>(dynamic_pair.ground).linear;
+    check(near(dynamic_pair.velocity().x+2*lower_velocity.x,2) && lower_velocity.x>0 && dynamic_pair.velocity().x<2,
+        "friction transfers tangential momentum between unequal dynamic masses");
+    friction_test_scene conveyor;
+    conveyor.materials(1,1);
+    conveyor.target.remove_tag(conveyor.ground,tag_id{"physics.static"});
+    conveyor.target.add_tag(conveyor.ground,tag_id{"physics.kinematic"});
+    conveyor.target.get_component<velocity_3d_component>(conveyor.ground).linear={1,0,0};
+    conveyor.target.get_component<velocity_3d_component>(conveyor.cube).linear={};
+    conveyor.step(30);
+    check(near(conveyor.velocity().x,1) && near(conveyor.target.get_component<velocity_3d_component>(conveyor.ground).linear.x,1),
+        "friction follows kinematic surface velocity without changing that surface's velocity");
+    friction_test_scene sphere;
+    sphere.materials(0.5f,0.3f);
+    sphere.target.get_component<collider_3d_component>(sphere.cube).shape=collider_shape_3d::sphere;
+    sphere.target.get_component<velocity_3d_component>(sphere.cube).linear={0,0,2};
+    sphere.step(60);
+    check(near(sphere.velocity().z,0.5f) && near(sphere.velocity().x,0),"sphere-box friction handles the second tangential axis");
+    friction_test_scene diagonal;
+    diagonal.materials(0.5f,0.3f);
+    diagonal.target.get_component<velocity_3d_component>(diagonal.cube).linear={1.2f,0,1.6f};
+    diagonal.step(60);
+    check(near(diagonal.velocity().x,0.3f) && near(diagonal.velocity().z,0.4f),
+        "diagonal sliding has one isotropic friction budget, not one per axis");
+    friction_test_scene light;
+    light.materials(0.5f,0.3f);
+    light.target.get_component<rigid_body_3d_component>(light.cube).inverse_mass=2;
+    light.step(60);
+    check(near(light.velocity().x,0.5f),"supported sliding deceleration is independent of mass");
+    friction_test_scene one_iteration(1),many_iterations(8),reversed(4,true);
+    for (auto* scene : {&one_iteration,&many_iterations,&reversed}) {
+        scene->materials(0.5f,0.3f);scene->step(60);
+    }
+    check(near(one_iteration.velocity().x,many_iterations.velocity().x) && near(many_iterations.velocity().x,0.5f),
+        "solver iterations do not multiply single-contact friction");
+    check(near(reversed.velocity().x,one_iteration.velocity().x),"friction is independent of canonical entity ordering");
+    std::printf("Friction: %d checks, %d failures\n",result.checks,result.failures);
+    return result;
+}
+
 struct tick_record {
     system_phase phase;
     system_tick_type type;
@@ -302,6 +481,19 @@ physics_sample_test_result run_physics_world_tests() {
     for (u64 frame=0;frame<240;++frame) demo_physics.run_test_frame(demo_scheduler,demo,demo_events,1.0f/60,frame);
     check(near(demo.get_component<transform_3d_component>(handles.filtered_cube).position.y,0.5f,0.003f),
         "sample filtered cube crosses excluded platform and lands on world layer");
+    const auto& rough_position=demo.get_component<transform_3d_component>(handles.rough_cube).position;
+    const auto& slippery_position=demo.get_component<transform_3d_component>(handles.slippery_cube).position;
+    check(slippery_position.x>rough_position.x+2 && near(rough_position.y,0.4f) && near(slippery_position.y,0.4f) &&
+        near(demo.get_component<velocity_3d_component>(handles.rough_cube).linear.x,0) &&
+        near(demo.get_component<velocity_3d_component>(handles.slippery_cube).linear.x,0),
+        "sample low-friction cube travels farther while both cubes settle on the same floor");
+    const auto camera_before=demo.get_component<transform_3d_component>(handles.camera).position;
+    restart_friction_demo(demo,handles);
+    check(near(rough_position.x,-6) && near(slippery_position.x,-6) &&
+        near(demo.get_component<velocity_3d_component>(handles.rough_cube).linear.x,3) &&
+        near(demo.get_component<velocity_3d_component>(handles.slippery_cube).linear.x,3) &&
+        near(demo.get_component<transform_3d_component>(handles.camera).position.z,camera_before.z),
+        "friction replay resets identical initial conditions without moving the camera");
     auto& filter=demo.get_component<collision_filter_3d_component>(handles.filtered_cube);
     filter.mask|=collision_layer_3d::enemy;
     demo.get_component<transform_3d_component>(handles.filtered_cube).position={-6,5,2};
@@ -330,7 +522,10 @@ physics_sample_test_result run_physics_world_tests() {
     check(demo_physics.simulation.events().empty() && demo_physics.simulation.stats().collider_count==0,
         "sample reset clears physics statistics and pending events");
 
-    std::printf("Physics World/Broadphase/events: %d checks, %d failures\n",result.checks,result.failures);
+    const auto friction=run_friction_tests();
+    result.checks+=friction.checks;
+    result.failures+=friction.failures;
+    std::printf("Physics World/Broadphase/events/friction: %d checks, %d failures\n",result.checks,result.failures);
     return result;
 }
 }
